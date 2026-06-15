@@ -1,0 +1,1 @@
+Please perform a deep analysis on all project files and once your understanding is clear let me know so I can inform you on how we will proceed. NOTE: The three core documentation files are README.md, /logs/changelog.md and /debug/troubleshooting.md
