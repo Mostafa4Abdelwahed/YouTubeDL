@@ -1,0 +1,14 @@
+# Core
+yt-dlp>=2025.1.0
+requests>=2.31.0
+
+# YouTube anti-bot stack (required since YouTube enforced PO Tokens + nsig challenges)
+#   bgutil-ytdlp-pot-provider : yt-dlp plugin that fetches PO Tokens. Runs in
+#                               "script mode" against a LOCAL Node.js script built
+#                               into pot-provider/server. The deploy script builds
+#                               it; keep this version == the cloned bgutil server
+#                               tag (1.3.1).
+#   yt-dlp-ejs                : JS challenge solver distribution (uses Deno) for
+#                               YouTube's "n" signature parameter
+bgutil-ytdlp-pot-provider==1.3.1
+yt-dlp-ejs>=0.8.0
