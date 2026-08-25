@@ -67,6 +67,9 @@ class QueueRow(ctk.CTkFrame):
         super().__init__(parent, fg_color=CARD, corner_radius=8, **kwargs)
         self.task = task
         self._cb = callbacks
+        self._sig = None          # last rendered state signature
+        self._last_status = None  # status used for the current widget layout
+        self._last_pct = -1       # last percent drawn on the progress bar
         self._build()
 
     def _build(self) -> None:
@@ -119,35 +122,52 @@ class QueueRow(ctk.CTkFrame):
         self._info.grid(row=2, column=0, columnspan=4, sticky="ew", padx=12, pady=(0, 8))
 
     def refresh(self) -> None:
-        color = STATUS_COLOR.get(self.task.status, MUT)
-        self._dot.configure(text_color=color)
+        t = self.task
+        st = t.status
+        # Skip entirely when nothing visible changed — configure() calls are
+        # what make the UI sluggish when progress ticks arrive rapidly.
+        sig = (st, int(t.progress), t.speed_str, t.eta_str, t.current_filename,
+               t.final_filename, t.error_message)
+        if sig == self._sig:
+            return
+        status_changed = st != self._last_status
+        self._sig = sig
 
-        st = self.task.status
+        self._dot.configure(text_color=STATUS_COLOR.get(st, MUT))
+
+        if status_changed:
+            self._last_status = st
+            if st in (DownloadStatus.COMPLETED, DownloadStatus.SKIPPED):
+                self._bar.set(1.0)
+                self._last_pct = 100
+                self._bar.configure(progress_color=SUCCESS
+                                    if st == DownloadStatus.COMPLETED else WARN)
+            elif st == DownloadStatus.PAUSED:
+                self._bar.configure(progress_color=WARN)
+            else:
+                self._bar.configure(progress_color=ACCENT)
+
+            if st in (DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING):
+                self._pause_btn.pack(side="left", padx=(0, 2))
+                self._pause_btn.configure(text="⏸", text_color=TEXT)
+                self._retry_btn.pack_forget()
+            elif st == DownloadStatus.PAUSED:
+                self._pause_btn.pack(side="left", padx=(0, 2))
+                self._pause_btn.configure(text="▶", text_color=SUCCESS)
+                self._retry_btn.pack_forget()
+            elif st == DownloadStatus.FAILED:
+                self._pause_btn.pack_forget()
+                self._retry_btn.pack(side="left", padx=(0, 2))
+            else:
+                self._pause_btn.pack_forget()
+                self._retry_btn.pack_forget()
+
+        pct = int(t.progress)
         if st in (DownloadStatus.COMPLETED, DownloadStatus.SKIPPED):
-            self._bar.set(1.0)
-            self._bar.configure(progress_color=SUCCESS
-                                if st == DownloadStatus.COMPLETED else WARN)
-        elif st == DownloadStatus.PAUSED:
-            self._bar.set(self.task.progress / 100.0)
-            self._bar.configure(progress_color=WARN)
-        else:
-            self._bar.set(self.task.progress / 100.0)
-            self._bar.configure(progress_color=ACCENT)
-
-        if st in (DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING):
-            self._pause_btn.pack(side="left", padx=(0, 2))
-            self._pause_btn.configure(text="⏸", text_color=TEXT)
-            self._retry_btn.pack_forget()
-        elif st == DownloadStatus.PAUSED:
-            self._pause_btn.pack(side="left", padx=(0, 2))
-            self._pause_btn.configure(text="▶", text_color=SUCCESS)
-            self._retry_btn.pack_forget()
-        elif st == DownloadStatus.FAILED:
-            self._pause_btn.pack_forget()
-            self._retry_btn.pack(side="left", padx=(0, 2))
-        else:
-            self._pause_btn.pack_forget()
-            self._retry_btn.pack_forget()
+            pct = 100
+        if pct != self._last_pct:
+            self._bar.set(pct / 100.0)
+            self._last_pct = pct
 
         self._info.configure(text=self._info_text())
 
@@ -188,6 +208,11 @@ class App(ctk.CTk):
         self._queue.on_log = self._log_append
         self._rows: dict[str, QueueRow] = {}
         self._tasks: list = []
+        # Coalesced refresh: progress events just mark rows dirty; a single
+        # scheduled flush redraws them. Prevents event-loop flooding.
+        self._pending_refresh: dict[str, object] = {}
+        self._refresh_job: str | None = None
+        self._last_running: bool | None = None
 
         self._build_ui()
 
@@ -777,6 +802,7 @@ class App(ctk.CTk):
         self._queue.clear()
         self._tasks.clear()
         self._rows.clear()
+        self._pending_refresh.clear()
         for w in self._scroll.winfo_children():
             w.destroy()
         self._count_lbl.configure(text="0 items")
@@ -838,6 +864,7 @@ class App(ctk.CTk):
 
     def _delete_task(self, task) -> None:
         task.cancelled = True
+        self._pending_refresh.pop(task.video_id, None)
         row = self._rows.pop(task.video_id, None)
         if row:
             row.destroy()
@@ -854,7 +881,16 @@ class App(ctk.CTk):
     # ── Update helpers ────────────────────────────────────────────────────────
 
     def _on_task_update(self, task) -> None:
-        self.after(0, lambda t=task: self._refresh_row(t))
+        # Called from worker threads — just mark dirty; the flush redraws.
+        self._pending_refresh[task.video_id] = task
+        if self._refresh_job is None:
+            self._refresh_job = self.after(150, self._flush_pending)
+
+    def _flush_pending(self) -> None:
+        self._refresh_job = None
+        pending, self._pending_refresh = self._pending_refresh, {}
+        for task in pending.values():
+            self._refresh_row(task)
 
     def _refresh_row(self, task) -> None:
         row = self._rows.get(task.video_id)
@@ -908,8 +944,10 @@ class App(ctk.CTk):
 
     def _sync_buttons(self) -> None:
         running = self._queue.is_running
-        self._start_btn.configure(state="normal" if not running else "disabled")
-        self._pause_btn.configure(state="disabled" if not running else "normal")
+        if running != self._last_running:
+            self._last_running = running
+            self._start_btn.configure(state="normal" if not running else "disabled")
+            self._pause_btn.configure(state="disabled" if not running else "normal")
         self.after(400, self._sync_buttons)
 
     def _log_append(self, msg: str) -> None:

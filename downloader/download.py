@@ -116,6 +116,7 @@ def download_task(
         progress_hook({"status": "downloading"})
 
     seen_files: set[str] = set()
+    last_report = [0.0]
 
     def hook(d: dict) -> None:
         # Pause request short-circuits everything else.
@@ -127,7 +128,8 @@ def download_task(
             seen_files.add(os.path.abspath(fn))
             task.current_filename = os.path.basename(fn)
 
-        if d.get("status") == "downloading":
+        status = d.get("status")
+        if status == "downloading":
             # Prefer the pre-computed percent string
             pct_str = d.get("_percent_str", "").strip().rstrip("%")
             try:
@@ -139,6 +141,13 @@ def download_task(
                     task.progress = min((downloaded / total) * 100, 99.9)
             task.speed_str = d.get("_speed_str", "") or ""
             task.eta_str = d.get("_eta_str", "") or ""
+
+            # Throttle UI reports to ~3/sec; yt-dlp fires far more often and
+            # flooding the tkinter event loop makes the whole app laggy.
+            now = time.monotonic()
+            if now - last_report[0] < 0.33:
+                return
+            last_report[0] = now
 
         if progress_hook:
             progress_hook(d)
