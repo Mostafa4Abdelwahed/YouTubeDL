@@ -26,8 +26,9 @@ _RULES = [
     ("could not copy .*cookie database|cookie database|failed to extract cookies|"
      "cookiesfrombrowser|unable to find cookie|no cookie",
      "Browser cookie database is locked",
-     "Close the browser completely (all windows AND background processes) and retry, "
-     "or export a cookies.txt with the 'Get cookies.txt LOCALLY' extension and use that instead."),
+     "The app now tries to force-unlock the cookie DB automatically (it closes the "
+     "process locking it). If it still fails, fully close the browser (all background "
+     "processes) and retry, or export a cookies.txt with 'Get cookies.txt LOCALLY'."),
 
     ("dpapi|failed to decrypt|decrypt with",
      "Cookie decryption failed (DPAPI)",

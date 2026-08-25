@@ -649,13 +649,14 @@ class App(ctk.CTk):
                         f"WARNING: {cookies_from_browser} is running — cookie extraction "
                         f"may fail ('Could not copy cookie database'). Close it and retry, "
                         f"or use a cookies.txt file.")
-                    messagebox.showwarning(
-                        "Browser Still Running",
-                        f"{cookies_from_browser.title()} is currently open.\n\n"
-                        "yt-dlp cannot copy its cookie database while the browser is running.\n\n"
-                        f"Close {cookies_from_browser.title()} completely (including any background "
-                        "processes in Task Manager) and click Add again — or use a cookies.txt file "
-                        "exported with the 'Get cookies.txt LOCALLY' extension instead.")
+                messagebox.showwarning(
+                    "Browser Still Running",
+                    f"{cookies_from_browser.title()} is currently open.\n\n"
+                    "The app can force-unlock the cookie database automatically (it closes the "
+                    "process locking it), so you can usually just proceed. If extraction still "
+                    "fails, fully close the browser (including background processes in Task Manager) "
+                    "and click Add again — or use a cookies.txt file exported with the "
+                    "'Get cookies.txt LOCALLY' extension instead.")
 
                 if cookies_from_browser and self._is_elevated():
                     self._log_append(
