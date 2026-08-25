@@ -106,6 +106,8 @@ def download_task(
     task.status = DownloadStatus.DOWNLOADING
     task.speed_str = ""
     task.eta_str = ""
+    if progress_hook:
+        progress_hook({"status": "downloading"})
 
     seen_files: set[str] = set()
 

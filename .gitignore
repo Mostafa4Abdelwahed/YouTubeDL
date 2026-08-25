@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+pot-provider/server/node_modules/
+storage/history.db
+logs/*.log

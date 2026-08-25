@@ -13,7 +13,7 @@ class DownloadQueue:
         self._executor: Optional[ThreadPoolExecutor] = None
         self._running = False
         self._lock = threading.Lock()
-        self._in_flight: set[VideoTask] = set()
+        self._in_flight: list[VideoTask] = []
         self.on_task_update: Optional[Callable[[VideoTask], None]] = None
 
     @property
@@ -98,7 +98,7 @@ class DownloadQueue:
                 time.sleep(0.2)
                 continue
 
-            self._in_flight.add(task)
+            self._in_flight.append(task)
             self._executor.submit(self._run_task, task, skip_downloaded)
 
         with self._lock:
@@ -120,7 +120,8 @@ class DownloadQueue:
             download_task(task, progress_hook=hook, skip_downloaded=skip_downloaded)
         finally:
             with self._lock:
-                self._in_flight.discard(task)
+                if task in self._in_flight:
+                    self._in_flight.remove(task)
                 # Keep paused tasks tracked so they can be resumed globally.
                 if task.status == DownloadStatus.PAUSED and \
                         not any(t is task for t in self._pending):
