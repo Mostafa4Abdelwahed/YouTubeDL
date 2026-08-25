@@ -3,7 +3,8 @@ import re
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import filedialog, messagebox
+import customtkinter as ctk
 
 
 def _strip_ansi(text: str) -> str:
@@ -24,173 +25,129 @@ from downloader import runtime
 from storage import db
 
 
-# YouTube-style dark theme with a red accent palette
-DARK_BG   = "#181818"
-PANEL_BG  = "#242424"
-PANEL_BG2 = "#2b2b2b"
-ACCENT    = "#CE0000"
-ACCENT_H  = "#A30003"
-SECONDARY = "#780002"
-TEXT_PRI  = "#f1f1f1"
-TEXT_MUT  = "#9a9a9a"
-SUCCESS   = "#22c55e"
-WARNING   = "#f59e0b"
-ERROR     = "#F90004"
-BORDER    = "#3a3a3a"
-LOG_BG    = "#0f0f0f"
-SELECT_BG = "#5a5a5a"
-PROGRESS  = "#947472"
-DLOAD_CLR = "#8c9472"
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("dark-blue")
 
-FONT_HDR  = ("Segoe UI", 13, "bold")
-FONT_LBL  = ("Segoe UI", 10)
-FONT_SM   = ("Segoe UI", 9)
+
+# ── Palette ────────────────────────────────────────────────────────────────
+BG       = "#0e0e0e"
+PANEL    = "#161616"
+CARD     = "#1d1d1d"
+ENTRY    = "#262626"
+BORDER   = "#2e2e2e"
+ACCENT   = "#CE0000"
+ACCENT_H = "#A30003"
+TEXT     = "#f1f1f1"
+MUT      = "#9a9a9a"
+SUCCESS  = "#22c55e"
+WARN     = "#f59e0b"
+ERR      = "#F90004"
+PROGRESS = "#947472"
+
+FONT_HDR = ("Segoe UI", 14, "bold")
+FONT_LBL = ("Segoe UI", 10)
+FONT_SM  = ("Segoe UI", 9)
 FONT_MONO = ("Consolas", 8)
 
 
 STATUS_COLOR = {
-    DownloadStatus.QUEUED:      TEXT_MUT,
-    DownloadStatus.DOWNLOADING: DLOAD_CLR,
+    DownloadStatus.QUEUED:      MUT,
+    DownloadStatus.DOWNLOADING: "#8c9472",
     DownloadStatus.COMPLETED:   SUCCESS,
-    DownloadStatus.FAILED:      ERROR,
-    DownloadStatus.SKIPPED:     WARNING,
-    DownloadStatus.PAUSED:      WARNING,
+    DownloadStatus.FAILED:      ERR,
+    DownloadStatus.SKIPPED:     WARN,
+    DownloadStatus.PAUSED:      WARN,
 }
 
 
-class RoundedButton(tk.Button):
-    def __init__(self, parent, text, command, bg=ACCENT, fg=TEXT_PRI,
-                 hover_bg=ACCENT_H, **kwargs):
-        for k in ("width", "height", "radius"):
-            kwargs.pop(k, None)
-        super().__init__(
-            parent, text=text, command=command,
-            bg=bg, fg=fg,
-            activebackground=hover_bg, activeforeground=fg,
-            relief="flat", bd=0, cursor="hand2",
-            font=("Segoe UI", 10, "bold"),
-            highlightthickness=0,
-            padx=10, pady=6,
-        )
-        self._bg = bg
-        self._hover_bg = hover_bg
-        self._enabled = True
-        self.bind("<Enter>", lambda e: self.config(bg=hover_bg) if self._enabled else None)
-        self.bind("<Leave>", lambda e: self.config(bg=bg) if self._enabled else None)
-
-    def set_enabled(self, enabled: bool) -> None:
-        self._enabled = enabled
-        self.config(state="normal" if enabled else "disabled",
-                    bg=self._bg if enabled else BORDER)
-
-    def set_text(self, text: str) -> None:
-        self.config(text=text)
-
-
-class IconButton(tk.Button):
-    """Small square-ish icon button used in queue rows / headers."""
-    def __init__(self, parent, text, command, fg=TEXT_MUT, **kwargs):
-        super().__init__(
-            parent, text=text, command=command,
-            bg=PANEL_BG, fg=fg, relief="flat", bd=0,
-            activebackground=PANEL_BG2, activeforeground=fg,
-            font=("Segoe UI Symbol", 10), cursor="hand2",
-            padx=6, pady=2, takefocus=0,
-        )
-        self._fg = fg
-        self.bind("<Enter>", lambda e: self.config(fg=ACCENT if self._fg != ERROR else ERROR))
-        self.bind("<Leave>", lambda e: self.config(fg=self._fg))
-
-    def set_fg(self, fg):
-        self._fg = fg
-        self.config(fg=fg)
-
-
-class QueueRow(tk.Frame):
+class QueueRow(ctk.CTkFrame):
     def __init__(self, parent, task, callbacks, **kwargs):
-        super().__init__(parent, bg=PANEL_BG, **kwargs)
+        super().__init__(parent, fg_color=CARD, corner_radius=8, **kwargs)
         self.task = task
         self._cb = callbacks
         self._build()
 
     def _build(self) -> None:
-        self.columnconfigure(1, weight=1)
+        self.grid_columnconfigure(1, weight=1)
 
-        self._dot = tk.Label(self, text="●", fg=STATUS_COLOR[self.task.status],
-                             bg=PANEL_BG, font=FONT_SM)
-        self._dot.grid(row=0, column=0, padx=(8, 4), pady=(6, 0), sticky="w")
+        self._dot = ctk.CTkLabel(self, text="●",
+                                 text_color=STATUS_COLOR[self.task.status],
+                                 font=("Segoe UI", 12))
+        self._dot.grid(row=0, column=0, padx=(10, 4), pady=(8, 0), sticky="w")
 
         title = self.task.title
-        if len(title) > 70:
-            title = title[:70] + "…"
-        self._title = tk.Label(self, text=title, fg=TEXT_PRI, bg=PANEL_BG,
-                               font=FONT_SM, anchor="w")
-        self._title.grid(row=0, column=1, sticky="ew", pady=(6, 0))
+        if len(title) > 72:
+            title = title[:72] + "…"
+        self._title = ctk.CTkLabel(self, text=title, text_color=TEXT,
+                                   anchor="w", font=FONT_SM)
+        self._title.grid(row=0, column=1, sticky="ew", pady=(8, 0))
 
-        tk.Label(self, text=self.task.output_format.value.upper(),
-                 fg=TEXT_MUT, bg=PANEL_BG, font=FONT_SM, width=5).grid(
-            row=0, column=2, padx=6)
+        self._fmt = ctk.CTkLabel(self, text=self.task.output_format.value.upper(),
+                                 text_color=MUT, font=FONT_SM, width=40)
+        self._fmt.grid(row=0, column=2, padx=6)
 
-        # Action buttons (right aligned)
-        self._actions = tk.Frame(self, bg=PANEL_BG)
-        self._actions.grid(row=0, column=3, padx=(0, 8), pady=(6, 0))
+        self._actions = ctk.CTkFrame(self, fg_color="transparent")
+        self._actions.grid(row=0, column=3, padx=(0, 10), pady=(8, 0))
 
-        self._pause_btn = IconButton(self._actions, "⏸", self._cb["on_pause"])
+        self._pause_btn = ctk.CTkButton(self._actions, text="⏸", width=30, height=26,
+                                        fg_color="transparent", hover_color="#333333",
+                                        text_color=TEXT, font=("Segoe UI Symbol", 11),
+                                        command=lambda: self._cb["on_pause"](self.task))
         self._pause_btn.pack(side="left", padx=(0, 2))
 
-        self._retry_btn = IconButton(self._actions, "↻", self._cb["on_retry"], fg=WARNING)
+        self._retry_btn = ctk.CTkButton(self._actions, text="↻", width=30, height=26,
+                                        fg_color="transparent", hover_color="#333333",
+                                        text_color=WARN, font=("Segoe UI Symbol", 11),
+                                        command=lambda: self._cb["on_retry"](self.task))
         self._retry_btn.pack(side="left", padx=(0, 2))
 
-        self._del_btn = IconButton(self._actions, "🗑", self._cb["on_delete"], fg=TEXT_MUT)
+        self._del_btn = ctk.CTkButton(self._actions, text="🗑", width=30, height=26,
+                                      fg_color="transparent", hover_color="#333333",
+                                      text_color=MUT, font=("Segoe UI", 11),
+                                      command=lambda: self._cb["on_delete"](self.task))
         self._del_btn.pack(side="left")
 
-        # Progress bar
-        self._bar_var = tk.DoubleVar(value=0)
-        self._bar = ttk.Progressbar(self, variable=self._bar_var, maximum=100,
-                                    mode="determinate")
-        self._bar.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 2))
+        self._bar = ctk.CTkProgressBar(self, height=6, corner_radius=3,
+                                      fg_color=BORDER, progress_color=ACCENT)
+        self._bar.grid(row=1, column=0, columnspan=4, sticky="ew", padx=10, pady=(4, 2))
+        self._bar.set(0)
 
-        # Info line: speed • ETA • filename / status
-        self._info = tk.Label(self, text="", fg=TEXT_MUT, bg=PANEL_BG,
-                              font=FONT_MONO, anchor="w")
-        self._info.grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 6))
-
-        sep = tk.Frame(self, bg=BORDER, height=1)
-        sep.grid(row=3, column=0, columnspan=4, sticky="ew")
+        self._info = ctk.CTkLabel(self, text="", text_color=MUT, anchor="w",
+                                  font=FONT_MONO)
+        self._info.grid(row=2, column=0, columnspan=4, sticky="ew", padx=12, pady=(0, 8))
 
     def refresh(self) -> None:
-        color = STATUS_COLOR.get(self.task.status, TEXT_MUT)
-        self._dot.config(fg=color)
+        color = STATUS_COLOR.get(self.task.status, MUT)
+        self._dot.configure(text_color=color)
 
-        # Progress
-        if self.task.status in (DownloadStatus.COMPLETED, DownloadStatus.SKIPPED):
-            self._bar_var.set(100)
-        elif self.task.status == DownloadStatus.PAUSED:
-            self._bar_var.set(self.task.progress)
-        else:
-            self._bar_var.set(self.task.progress)
-
-        # Action buttons visibility
         st = self.task.status
+        if st in (DownloadStatus.COMPLETED, DownloadStatus.SKIPPED):
+            self._bar.set(1.0)
+            self._bar.configure(progress_color=SUCCESS
+                                if st == DownloadStatus.COMPLETED else WARN)
+        elif st == DownloadStatus.PAUSED:
+            self._bar.set(self.task.progress / 100.0)
+            self._bar.configure(progress_color=WARN)
+        else:
+            self._bar.set(self.task.progress / 100.0)
+            self._bar.configure(progress_color=ACCENT)
+
         if st in (DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING):
             self._pause_btn.pack(side="left", padx=(0, 2))
-            self._pause_btn.config(text="⏸")
-            self._pause_btn.set_fg(TEXT_MUT)
+            self._pause_btn.configure(text="⏸", text_color=TEXT)
             self._retry_btn.pack_forget()
         elif st == DownloadStatus.PAUSED:
             self._pause_btn.pack(side="left", padx=(0, 2))
-            self._pause_btn.config(text="▶")
-            self._pause_btn.set_fg(SUCCESS)
+            self._pause_btn.configure(text="▶", text_color=SUCCESS)
             self._retry_btn.pack_forget()
         elif st == DownloadStatus.FAILED:
             self._pause_btn.pack_forget()
             self._retry_btn.pack(side="left", padx=(0, 2))
-        else:  # COMPLETED / SKIPPED
+        else:
             self._pause_btn.pack_forget()
             self._retry_btn.pack_forget()
 
-        # Info line
-        self._info.config(text=self._info_text())
+        self._info.configure(text=self._info_text())
 
     def _info_text(self) -> str:
         st = self.task.status
@@ -203,7 +160,7 @@ class QueueRow(tk.Frame):
             fn = self.task.current_filename or ""
             if fn:
                 parts.append(fn)
-            return "  •  ".join(parts)
+            return "    ".join(parts)
         if st == DownloadStatus.COMPLETED:
             return self.task.final_filename or "Done"
         if st == DownloadStatus.FAILED:
@@ -215,15 +172,12 @@ class QueueRow(tk.Frame):
         return "Queued"
 
 
-class App(tk.Tk):
+class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("YouTube Downloader")
-        self.configure(bg=DARK_BG)
-        self.minsize(960, 600)
-
-        self.option_add("*selectBackground", SELECT_BG)
-        self.option_add("*selectForeground", TEXT_PRI)
+        self.configure(fg_color=BG)
+        self.minsize(1024, 660)
 
         self._set_icon()
 
@@ -234,18 +188,9 @@ class App(tk.Tk):
         self._tasks: list = []
 
         self._build_ui()
-        self._apply_styles()
-
-        self.update_idletasks()
-        header_h = self._header.winfo_reqheight()
-        content_h = self._left_inner.winfo_reqheight()
-        needed_h = header_h + content_h + 28
-        self._center_window(1180, needed_h)
 
         self.after(500, self._validate_cookie_state)
         self.after(600, self._init_runtime)
-
-        # Periodically sync Start/Pause button states with the queue.
         self._sync_buttons()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -260,13 +205,33 @@ class App(tk.Tk):
         finally:
             os._exit(0)
 
+    # ── Helpers ────────────────────────────────────────────────────────────
+
+    def _card(self, parent, title=None):
+        c = ctk.CTkFrame(parent, fg_color=CARD, corner_radius=10)
+        c.pack(fill="x", pady=(0, 12), padx=4)
+        if title:
+            ctk.CTkLabel(c, text=title, text_color=TEXT,
+                         font=("Segoe UI", 11, "bold")).pack(anchor="w",
+                                                             padx=12, pady=(10, 6))
+        return c
+
+    def _lbl(self, parent, text):
+        ctk.CTkLabel(parent, text=text, text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(8, 2))
+
+    def _int_val(self, var, default):
+        try:
+            return int(str(var.get()).strip() or default)
+        except Exception:
+            return default
+
     # ── Window placement ─────────────────────────────────────────────────────
 
     def _center_window(self, width: int, height: int) -> None:
         work_left = work_top = 0
         work_w = self.winfo_screenwidth()
         work_h = self.winfo_screenheight()
-
         if sys.platform == "win32":
             try:
                 import ctypes
@@ -282,7 +247,6 @@ class App(tk.Tk):
                     work_h = rect.bottom - rect.top
             except Exception:
                 pass
-
         width = min(width, work_w)
         height = min(height, work_h)
         x = work_left + (work_w - width) // 2
@@ -295,19 +259,15 @@ class App(tk.Tk):
         base = os.path.dirname(os.path.abspath(__file__))
         png_path = os.path.join(base, "assets", "icon.png")
         ico_path = os.path.join(base, "assets", "icon.ico")
-
         if not os.path.isfile(png_path):
             return
-
         if sys.platform == "win32":
             try:
                 import ctypes
                 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-                    "YouTubePlaylistDownloader.App.1"
-                )
+                    "YouTubePlaylistDownloader.App.1")
             except Exception:
                 pass
-
         try:
             icon = tk.PhotoImage(file=png_path)
             self.iconphoto(True, icon)
@@ -317,313 +277,238 @@ class App(tk.Tk):
         except Exception:
             pass
 
-    # ── Styles ──────────────────────────────────────────────────────────────
-
-    def _apply_styles(self) -> None:
-        s = ttk.Style(self)
-        s.theme_use("clam")
-        s.configure("TCombobox",
-                    fieldbackground=PANEL_BG, background=PANEL_BG,
-                    foreground=TEXT_PRI, selectbackground=SELECT_BG,
-                    selectforeground=TEXT_PRI, bordercolor=BORDER,
-                    arrowcolor=TEXT_MUT)
-        s.map("TCombobox", fieldbackground=[("readonly", PANEL_BG)])
-
-        s.configure("Overall.Horizontal.TProgressbar",
-                    troughcolor=BORDER, background=PROGRESS,
-                    darkcolor=PROGRESS, lightcolor=PROGRESS, bordercolor=PANEL_BG)
-        s.configure("Horizontal.TProgressbar",
-                    troughcolor=BORDER, background=PROGRESS,
-                    darkcolor=PROGRESS, lightcolor=PROGRESS, bordercolor=PANEL_BG)
-
     # ── UI Build ────────────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
-        hdr = tk.Frame(self, bg=PANEL_BG, pady=12)
+        hdr = ctk.CTkFrame(self, fg_color=PANEL, corner_radius=0, height=54)
         hdr.pack(fill="x")
-        self._header = hdr
-        tk.Label(hdr, text="▶  YouTube Downloader", fg=TEXT_PRI,
-                 bg=PANEL_BG, font=("Segoe UI", 16, "bold"), padx=20).pack(side="left")
-        tk.Label(hdr, text="Powered by yt-dlp", fg=TEXT_MUT,
-                 bg=PANEL_BG, font=FONT_SM).pack(side="right", padx=20)
+        ctk.CTkLabel(hdr, text="▶  YouTube Downloader", text_color=TEXT,
+                     font=FONT_HDR, padx=20).pack(side="left")
+        ctk.CTkLabel(hdr, text="Powered by yt-dlp", text_color=MUT,
+                     font=FONT_SM).pack(side="right", padx=20)
 
-        body = tk.Frame(self, bg=DARK_BG)
-        body.pack(fill="both", expand=True, padx=16, pady=10)
+        body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
+        body.pack(fill="both", expand=True, padx=14, pady=10)
 
-        left_outer = tk.Frame(body, bg=DARK_BG, width=320)
-        left_outer.pack(side="left", fill="y", padx=(0, 12))
-        left_outer.pack_propagate(False)
-        left_outer.grid_columnconfigure(0, weight=1)
-        left_outer.grid_rowconfigure(0, weight=1)
-
-        left_canvas = tk.Canvas(left_outer, bg=DARK_BG, highlightthickness=0)
-        left_sb = ttk.Scrollbar(left_outer, orient="vertical", command=left_canvas.yview)
-        left = tk.Frame(left_canvas, bg=DARK_BG)
-        self._left_inner = left
-        left_window = left_canvas.create_window((0, 0), window=left, anchor="nw")
-        left_canvas.configure(yscrollcommand=left_sb.set)
-        left_canvas.grid(row=0, column=0, sticky="nsew")
-        left_sb.grid(row=0, column=1, sticky="ns")
-
-        def _sync_left_scroll(event=None):
-            left_canvas.update_idletasks()
-            content_h = left.winfo_reqheight()
-            view_h = left_canvas.winfo_height()
-            left_canvas.itemconfigure(left_window, width=left_canvas.winfo_width())
-            if content_h > view_h + 1:
-                left_canvas.configure(scrollregion=(0, 0, 0, content_h))
-                left_sb.grid()
-            else:
-                left_canvas.yview_moveto(0)
-                left_canvas.configure(scrollregion=(0, 0, 0, view_h))
-                left_sb.grid_remove()
-
-        left.bind("<Configure>", _sync_left_scroll)
-        left_canvas.bind("<Configure>", _sync_left_scroll)
-        left_canvas.bind_all("<Shift-MouseWheel>",
-                             lambda e: left_canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
-
+        left = ctk.CTkScrollableFrame(body, width=330, fg_color=PANEL,
+                                      corner_radius=10,
+                                      scrollbar_button_color=BORDER,
+                                      scrollbar_button_hover_color=ACCENT)
+        left.pack(side="left", fill="y", padx=(0, 12))
         self._build_controls(left)
 
-        right = tk.Frame(body, bg=PANEL_BG)
+        right = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=10)
         right.pack(side="left", fill="both", expand=True)
         self._build_queue_panel(right)
 
-    def _build_controls(self, parent: tk.Frame) -> None:
-        def card(parent, title=None):
-            c = tk.Frame(parent, bg=PANEL_BG, padx=12, pady=10)
-            c.pack(fill="x", pady=(0, 10))
-            if title:
-                tk.Label(c, text=title, fg=TEXT_PRI, bg=PANEL_BG,
-                         font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
-            return c
+        self._center_window(1240, 780)
 
-        def lbl(c, text):
-            tk.Label(c, text=text, fg=TEXT_MUT, bg=PANEL_BG,
-                     font=FONT_SM).pack(anchor="w", pady=(6, 2))
-
-        # ── Source card ──
-        src = card(parent, "Source")
-        lbl(src, "YouTube URL or Playlist URL")
-        url_wrap = tk.Frame(src, bg=PANEL_BG,
-                            highlightbackground=BORDER, highlightthickness=1)
-        url_wrap.pack(fill="x")
+    def _build_controls(self, parent: ctk.CTkScrollableFrame) -> None:
+        # ── Source ──
+        src = self._card(parent, "Source")
+        ctk.CTkLabel(src, text="YouTube URL or Playlist URL", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12)
         self._url_var = tk.StringVar()
-        tk.Entry(url_wrap, textvariable=self._url_var, bg=PANEL_BG,
-                 fg=TEXT_PRI, insertbackground=TEXT_PRI,
-                 font=FONT_LBL, relief="flat", bd=6).pack(fill="x")
+        ctk.CTkEntry(src, textvariable=self._url_var, fg_color=ENTRY,
+                     text_color=TEXT, border_color=BORDER, height=32,
+                     font=FONT_LBL).pack(fill="x", padx=12, pady=(4, 0))
 
-        # Range selection (1-based, From – To; To=0 means through the end)
-        rng = tk.Frame(src, bg=PANEL_BG)
-        rng.pack(fill="x", pady=(4, 0))
-        tk.Label(rng, text="From #", fg=TEXT_MUT, bg=PANEL_BG,
-                 font=FONT_SM).pack(side="left")
-        self._range_start_var = tk.IntVar(value=1)
-        tk.Spinbox(rng, from_=1, to=100000, textvariable=self._range_start_var,
-                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=6,
-                   relief="flat", bd=2, highlightthickness=0).pack(side="left", padx=(4, 8))
-        tk.Label(rng, text="To #", fg=TEXT_MUT, bg=PANEL_BG,
-                 font=FONT_SM).pack(side="left")
-        self._range_end_var = tk.IntVar(value=0)
-        tk.Spinbox(rng, from_=0, to=100000, textvariable=self._range_end_var,
-                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=6,
-                   relief="flat", bd=2, highlightthickness=0).pack(side="left", padx=(4, 0))
-        tk.Label(rng, text="(0 = end)", fg=TEXT_MUT, bg=PANEL_BG,
-                 font=("Segoe UI", 7)).pack(side="left", padx=(6, 0))
+        rng = ctk.CTkFrame(src, fg_color="transparent")
+        rng.pack(fill="x", padx=12, pady=(8, 0))
+        ctk.CTkLabel(rng, text="From #", text_color=MUT, font=FONT_SM).pack(side="left")
+        self._range_start_var = tk.StringVar(value="1")
+        ctk.CTkEntry(rng, textvariable=self._range_start_var, width=52, height=26,
+                     fg_color=ENTRY, text_color=TEXT, border_color=BORDER,
+                     font=FONT_SM).pack(side="left", padx=(4, 8))
+        ctk.CTkLabel(rng, text="To #", text_color=MUT, font=FONT_SM).pack(side="left")
+        self._range_end_var = tk.StringVar(value="0")
+        ctk.CTkEntry(rng, textvariable=self._range_end_var, width=52, height=26,
+                     fg_color=ENTRY, text_color=TEXT, border_color=BORDER,
+                     font=FONT_SM).pack(side="left", padx=(4, 0))
+        ctk.CTkLabel(rng, text="(0 = end)", text_color=MUT,
+                     font=("Segoe UI", 7)).pack(side="left", padx=(6, 0))
 
-        # ── Options card ──
-        opt = card(parent, "Options")
-        lbl(opt, "Output Format")
-        fmt_row = tk.Frame(opt, bg=PANEL_BG)
-        fmt_row.pack(fill="x")
+        # ── Options ──
+        opt = self._card(parent, "Options")
+        ctk.CTkLabel(opt, text="Output Format", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12)
         self._format_var = tk.StringVar(value="MP4")
-        for fmt in ("MP4", "MP3", "AAC"):
-            tk.Radiobutton(fmt_row, text=fmt, variable=self._format_var, value=fmt,
-                           command=self._on_format_change,
-                           bg=PANEL_BG, fg=TEXT_PRI, selectcolor="#333333",
-                           activebackground=PANEL_BG, activeforeground=TEXT_PRI,
-                           font=FONT_LBL).pack(side="left", padx=(0, 6))
+        fmt_row = ctk.CTkFrame(opt, fg_color="transparent")
+        fmt_row.pack(fill="x", padx=12, pady=(2, 0))
+        for f in ("MP4", "MP3", "AAC"):
+            ctk.CTkRadioButton(fmt_row, text=f, variable=self._format_var, value=f,
+                               command=self._on_format_change, fg_color=ACCENT,
+                               border_color=BORDER, text_color=TEXT,
+                               font=FONT_LBL).pack(side="left", padx=(0, 10))
 
-        lbl(opt, "Video Quality")
+        ctk.CTkLabel(opt, text="Video Quality", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(8, 2))
         self._vq_var = tk.StringVar(value="RAW (Best)")
-        self._vq_combo = ttk.Combobox(opt, textvariable=self._vq_var,
-                                      values=list(VIDEO_QUALITY_LABELS.keys()),
-                                      state="readonly", font=FONT_LBL)
-        self._vq_combo.pack(fill="x")
+        self._vq_combo = ctk.CTkComboBox(opt, values=list(VIDEO_QUALITY_LABELS.keys()),
+                                        variable=self._vq_var, state="readonly",
+                                        fg_color=ENTRY, text_color=TEXT,
+                                        button_color=BORDER, dropdown_fg_color=PANEL,
+                                        border_color=BORDER, font=FONT_LBL)
+        self._vq_combo.pack(fill="x", padx=12)
 
-        lbl(opt, "Audio Quality")
+        ctk.CTkLabel(opt, text="Audio Quality", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(8, 2))
         self._aq_var = tk.StringVar(value="320 kbps")
-        ttk.Combobox(opt, textvariable=self._aq_var,
-                     values=list(AUDIO_QUALITY_LABELS.keys()),
-                     state="readonly", font=FONT_LBL).pack(fill="x")
+        ctk.CTkComboBox(opt, values=list(AUDIO_QUALITY_LABELS.keys()),
+                        variable=self._aq_var, state="readonly", fg_color=ENTRY,
+                        text_color=TEXT, button_color=BORDER,
+                        dropdown_fg_color=PANEL, border_color=BORDER,
+                        font=FONT_LBL).pack(fill="x", padx=12)
 
-        lbl(opt, "Output Folder")
-        dir_row = tk.Frame(opt, bg=PANEL_BG)
-        dir_row.pack(fill="x")
+        ctk.CTkLabel(opt, text="Output Folder", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(8, 2))
+        dir_row = ctk.CTkFrame(opt, fg_color="transparent")
+        dir_row.pack(fill="x", padx=12)
         self._dir_var = tk.StringVar(value=os.path.abspath("downloads"))
-        tk.Entry(dir_row, textvariable=self._dir_var, bg=PANEL_BG, fg=TEXT_PRI,
-                 insertbackground=TEXT_PRI, font=FONT_SM, relief="flat", bd=4,
-                 highlightthickness=1, highlightbackground=BORDER).pack(
-            side="left", fill="x", expand=True)
-        tk.Button(dir_row, text="…", command=self._browse_dir,
-                  bg=BORDER, fg=TEXT_PRI, relief="flat", font=FONT_LBL,
-                  padx=6, cursor="hand2").pack(side="left", padx=(4, 0))
+        ctk.CTkEntry(dir_row, textvariable=self._dir_var, fg_color=ENTRY,
+                     text_color=TEXT, border_color=BORDER, height=28,
+                     font=FONT_SM).pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(dir_row, text="Browse", command=self._browse_dir, width=70,
+                      height=28, fg_color=BORDER, hover_color=ACCENT,
+                      text_color=TEXT, font=FONT_SM).pack(side="left", padx=(6, 0))
 
         self._skip_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(opt, text="Skip already-downloaded videos",
-                       variable=self._skip_var, bg=PANEL_BG, fg=TEXT_MUT,
-                       selectcolor="#333333", activebackground=PANEL_BG,
-                       activeforeground=TEXT_PRI, font=FONT_SM).pack(
-            anchor="w", pady=(8, 0))
+        ctk.CTkCheckBox(opt, text="Skip already-downloaded videos",
+                        variable=self._skip_var, fg_color=ACCENT,
+                        border_color=BORDER, text_color=MUT,
+                        font=FONT_SM).pack(anchor="w", padx=12, pady=(10, 0))
 
-        # ── Throttling (avoid IP ban) ──
-        lbl(opt, "Delay between downloads (sec)")
-        self._delay_var = tk.IntVar(value=0)
-        tk.Spinbox(opt, from_=0, to=120, textvariable=self._delay_var,
-                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=8,
-                   relief="flat", bd=2, highlightthickness=0).pack(anchor="w")
+        # ── Throttling ──
+        thr = self._card(parent, "Throttling (avoid IP ban)")
+        ctk.CTkLabel(thr, text="Delay between downloads (sec)", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12)
+        self._delay_var = tk.StringVar(value="0")
+        ctk.CTkEntry(thr, textvariable=self._delay_var, width=60, height=26,
+                     fg_color=ENTRY, text_color=TEXT, border_color=BORDER,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(2, 0))
 
-        lbl(opt, "Pause after every N videos")
-        self._batch_size_var = tk.IntVar(value=10)
-        tk.Spinbox(opt, from_=0, to=200, textvariable=self._batch_size_var,
-                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=8,
-                   relief="flat", bd=2, highlightthickness=0).pack(anchor="w")
+        ctk.CTkLabel(thr, text="Pause after every N videos", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(8, 2))
+        self._batch_size_var = tk.StringVar(value="10")
+        ctk.CTkEntry(thr, textvariable=self._batch_size_var, width=60, height=26,
+                     fg_color=ENTRY, text_color=TEXT, border_color=BORDER,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(2, 0))
 
-        lbl(opt, "Batch pause duration (sec)")
-        self._batch_pause_var = tk.IntVar(value=60)
-        tk.Spinbox(opt, from_=0, to=3600, textvariable=self._batch_pause_var,
-                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=8,
-                   relief="flat", bd=2, highlightthickness=0).pack(anchor="w")
+        ctk.CTkLabel(thr, text="Batch pause duration (sec)", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(8, 2))
+        self._batch_pause_var = tk.StringVar(value="60")
+        ctk.CTkEntry(thr, textvariable=self._batch_pause_var, width=60, height=26,
+                     fg_color=ENTRY, text_color=TEXT, border_color=BORDER,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(2, 4))
 
-        lbl(opt, "Concurrent Downloads")
-        self._workers_var = tk.IntVar(value=1)
-        tk.Scale(opt, from_=1, to=6, orient="horizontal",
-                 variable=self._workers_var, bg=PANEL_BG, fg=TEXT_PRI,
-                 troughcolor="#333333", highlightthickness=0,
-                 sliderrelief="flat", activebackground=ACCENT).pack(fill="x")
-
-        # ── Cookies card ──
-        ck = card(parent, "Cookies (fixes bot detection)")
+        # ── Cookies ──
+        ck = self._card(parent, "Cookies (fixes bot detection)")
         self._cookies_var = tk.StringVar(value="None")
-        ttk.Combobox(ck, textvariable=self._cookies_var,
-                     values=["None", "chrome", "firefox", "edge", "brave", "opera", "chromium"],
-                     state="readonly", font=FONT_LBL).pack(fill="x")
-        lbl(ck, "Cookies.txt file (alternative)")
-        cfile_row = tk.Frame(ck, bg=PANEL_BG)
-        cfile_row.pack(fill="x")
+        ctk.CTkComboBox(ck, values=["None", "chrome", "firefox", "edge",
+                                    "brave", "opera", "chromium"],
+                        variable=self._cookies_var, state="readonly",
+                        fg_color=ENTRY, text_color=TEXT, button_color=BORDER,
+                        dropdown_fg_color=PANEL, border_color=BORDER,
+                        font=FONT_LBL).pack(fill="x", padx=12)
+        ctk.CTkLabel(ck, text="Cookies.txt file (alternative)", text_color=MUT,
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(8, 2))
+        cfile_row = ctk.CTkFrame(ck, fg_color="transparent")
+        cfile_row.pack(fill="x", padx=12)
         self._cookiefile_var = tk.StringVar(value="")
-        tk.Entry(cfile_row, textvariable=self._cookiefile_var, bg=PANEL_BG,
-                 fg=TEXT_PRI, insertbackground=TEXT_PRI, font=FONT_SM,
-                 relief="flat", bd=4, highlightthickness=1,
-                 highlightbackground=BORDER).pack(side="left", fill="x", expand=True)
-        tk.Button(cfile_row, text="…", command=self._browse_cookies,
-                  bg=BORDER, fg=TEXT_PRI, relief="flat", font=FONT_LBL,
-                  padx=6, cursor="hand2").pack(side="left", padx=(4, 0))
-        tk.Button(cfile_row, text="✕", command=lambda: self._cookiefile_var.set(""),
-                  bg="#333333", fg=TEXT_PRI, relief="flat", font=FONT_SM,
-                  padx=4, cursor="hand2").pack(side="left", padx=(2, 0))
-        tk.Label(ck,
-                 text="Netscape format. Use 'Get cookies.txt LOCALLY' extension.",
-                 fg=TEXT_MUT, bg=PANEL_BG, font=("Segoe UI", 7),
-                 wraplength=280, justify="left").pack(anchor="w")
+        ctk.CTkEntry(cfile_row, textvariable=self._cookiefile_var, fg_color=ENTRY,
+                     text_color=TEXT, border_color=BORDER, height=28,
+                     font=FONT_SM).pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(cfile_row, text="Browse", command=self._browse_cookies,
+                      width=70, height=28, fg_color=BORDER, hover_color=ACCENT,
+                      text_color=TEXT, font=FONT_SM).pack(side="left", padx=(6, 0))
+        ctk.CTkButton(cfile_row, text="✕", command=lambda: self._cookiefile_var.set(""),
+                      width=30, height=28, fg_color="#333333", hover_color=ACCENT,
+                      text_color=TEXT, font=FONT_SM).pack(side="left", padx=(4, 0))
+        ctk.CTkLabel(ck, text="Netscape format. Use 'Get cookies.txt LOCALLY'.",
+                     text_color=MUT, font=("Segoe UI", 7),
+                     wraplength=290, justify="left").pack(anchor="w", padx=12, pady=(4, 0))
 
-        # ── Action buttons ──
-        actions = card(parent, "Actions")
-        self._add_btn = RoundedButton(actions, "＋  Add to Queue", self._add_to_queue,
-                                      bg="#525252", hover_bg="#636363")
-        self._add_btn.pack(fill="x", pady=(0, 6))
-        self._start_btn = RoundedButton(actions, "▶  Start", self._start_queue,
-                                        bg=SUCCESS, hover_bg="#1ca44e")
-        self._start_btn.pack(fill="x", pady=(0, 6))
-        self._pause_btn = RoundedButton(actions, "⏸  Pause", self._pause_queue,
-                                        bg="#787878", hover_bg="#8a8a8a")
-        self._pause_btn.pack(fill="x", pady=(0, 6))
-        self._retry_btn = RoundedButton(actions, "↻  Retry Failed", self._retry_failed,
-                                        bg="#525252", hover_bg="#636363")
-        self._retry_btn.pack(fill="x", pady=(0, 6))
-        self._clear_btn = RoundedButton(actions, "🗑  Clear Queue", self._clear_queue,
-                                        bg=SECONDARY, hover_bg=ACCENT_H)
-        self._clear_btn.pack(fill="x")
+        # ── Actions ──
+        act = self._card(parent, "Actions")
+        self._add_btn = ctk.CTkButton(act, text="＋  Add to Queue",
+                                      command=self._add_to_queue, height=34,
+                                      fg_color="#525252", hover_color="#636363",
+                                      text_color=TEXT, font=("Segoe UI", 11, "bold"))
+        self._add_btn.pack(fill="x", padx=12, pady=(2, 6))
+        self._start_btn = ctk.CTkButton(act, text="▶  Start", command=self._start_queue,
+                                        height=34, fg_color=SUCCESS, hover_color="#1ca44e",
+                                        text_color="#06210f",
+                                        font=("Segoe UI", 11, "bold"))
+        self._start_btn.pack(fill="x", padx=12, pady=(0, 6))
+        self._pause_btn = ctk.CTkButton(act, text="⏸  Pause", command=self._pause_queue,
+                                        height=34, fg_color="#787878", hover_color="#8a8a8a",
+                                        text_color=TEXT, font=("Segoe UI", 11, "bold"))
+        self._pause_btn.pack(fill="x", padx=12, pady=(0, 6))
+        self._retry_btn = ctk.CTkButton(act, text="↻  Retry Failed",
+                                        command=self._retry_failed, height=34,
+                                        fg_color="#525252", hover_color="#636363",
+                                        text_color=TEXT, font=("Segoe UI", 11, "bold"))
+        self._retry_btn.pack(fill="x", padx=12, pady=(0, 6))
+        self._clear_btn = ctk.CTkButton(act, text="🗑  Clear Queue",
+                                        command=self._clear_queue, height=34,
+                                        fg_color="#780002", hover_color=ACCENT_H,
+                                        text_color=TEXT,
+                                        font=("Segoe UI", 11, "bold"))
+        self._clear_btn.pack(fill="x", padx=12, pady=(0, 6))
 
-    def _build_queue_panel(self, parent: tk.Frame) -> None:
-        hdr = tk.Frame(parent, bg=PANEL_BG)
-        hdr.pack(fill="x", padx=12, pady=(10, 4))
-        tk.Label(hdr, text="Download Queue", fg=TEXT_PRI,
-                 bg=PANEL_BG, font=FONT_HDR).pack(side="left")
-        self._count_lbl = tk.Label(hdr, text="0 items", fg=TEXT_MUT,
-                                   bg=PANEL_BG, font=FONT_SM)
+    def _build_queue_panel(self, parent: ctk.CTkFrame) -> None:
+        hdr = ctk.CTkFrame(parent, fg_color="transparent")
+        hdr.pack(fill="x", padx=14, pady=(12, 4))
+        ctk.CTkLabel(hdr, text="Download Queue", text_color=TEXT,
+                     font=("Segoe UI", 14, "bold")).pack(side="left")
+        self._count_lbl = ctk.CTkLabel(hdr, text="0 items", text_color=MUT,
+                                       font=FONT_SM)
         self._count_lbl.pack(side="right")
 
-        prog_frame = tk.Frame(parent, bg=PANEL_BG)
-        prog_frame.pack(fill="x", padx=12, pady=(0, 4))
-        self._overall_var = tk.DoubleVar(value=0)
-        self._overall_bar = ttk.Progressbar(
-            prog_frame, variable=self._overall_var, maximum=100,
-            mode="determinate", style="Overall.Horizontal.TProgressbar")
+        opf = ctk.CTkFrame(parent, fg_color="transparent")
+        opf.pack(fill="x", padx=14, pady=(0, 4))
+        self._overall_bar = ctk.CTkProgressBar(opf, height=8, corner_radius=4,
+                                               fg_color=BORDER, progress_color=PROGRESS)
         self._overall_bar.pack(fill="x")
-        self._overall_lbl = tk.Label(prog_frame, text="", fg=TEXT_MUT,
-                                     bg=PANEL_BG, font=FONT_SM, anchor="w")
+        self._overall_bar.set(0)
+        self._overall_lbl = ctk.CTkLabel(opf, text="", text_color=MUT,
+                                         font=FONT_SM, anchor="w")
         self._overall_lbl.pack(anchor="w")
 
-        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=12)
+        self._scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent",
+                                             corner_radius=0,
+                                             scrollbar_button_color=BORDER,
+                                             scrollbar_button_hover_color=ACCENT)
+        self._scroll.pack(fill="both", expand=True, padx=6, pady=(4, 0))
 
-        container = tk.Frame(parent, bg=PANEL_BG)
-        container.pack(fill="both", expand=True, padx=4, pady=(4, 0))
+        log_hdr = ctk.CTkFrame(parent, fg_color="transparent")
+        log_hdr.pack(fill="x", padx=14, pady=(4, 2))
+        ctk.CTkLabel(log_hdr, text="Log", text_color=MUT,
+                     font=FONT_SM).pack(side="left")
+        ctk.CTkButton(log_hdr, text="Clear Log", command=self._clear_log, width=74,
+                      height=24, fg_color=BORDER, hover_color=ACCENT, text_color=TEXT,
+                      font=FONT_SM).pack(side="right")
+        ctk.CTkButton(log_hdr, text="Clear Done", command=self._clear_done, width=74,
+                      height=24, fg_color=BORDER, hover_color=ACCENT, text_color=TEXT,
+                      font=FONT_SM).pack(side="right", padx=(0, 6))
 
-        self._canvas = tk.Canvas(container, bg=PANEL_BG, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(container, orient="vertical",
-                                  command=self._canvas.yview)
-        self._scroll_frame = tk.Frame(self._canvas, bg=PANEL_BG)
-        self._scroll_frame.bind(
-            "<Configure>",
-            lambda e: self._canvas.configure(
-                scrollregion=self._canvas.bbox("all")))
-        self._scroll_window = self._canvas.create_window(
-            (0, 0), window=self._scroll_frame, anchor="nw")
-        self._canvas.bind(
-            "<Configure>",
-            lambda e: self._canvas.itemconfigure(self._scroll_window, width=e.width))
-        self._canvas.configure(yscrollcommand=scrollbar.set)
-        self._canvas.pack(side="left", fill="both", expand=True)
-        scrollbar.pack(side="right", fill="y")
-
-        self._canvas.bind_all("<MouseWheel>",
-                              lambda e: self._canvas.yview_scroll(
-                                  int(-1 * (e.delta / 120)), "units"))
-
-        tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=12, pady=(4, 0))
-        log_hdr = tk.Frame(parent, bg=PANEL_BG)
-        log_hdr.pack(fill="x", padx=12, pady=(4, 2))
-        tk.Label(log_hdr, text="Log", fg=TEXT_MUT,
-                 bg=PANEL_BG, font=FONT_SM).pack(side="left")
-        tk.Button(log_hdr, text="Clear Log", command=self._clear_log,
-                  bg=BORDER, fg=TEXT_MUT, relief="flat", font=FONT_SM,
-                  cursor="hand2", padx=4).pack(side="right")
-        tk.Button(log_hdr, text="Clear Done", command=self._clear_done,
-                  bg=BORDER, fg=TEXT_PRI, relief="flat", font=FONT_SM,
-                  cursor="hand2", padx=4).pack(side="right", padx=(0, 6))
-
-        log_frame = tk.Frame(parent, bg=LOG_BG)
-        log_frame.pack(fill="x", padx=4, pady=(0, 4))
-        self._log = tk.Text(log_frame, height=5, bg=LOG_BG, fg=TEXT_MUT,
-                            font=FONT_MONO, relief="flat", state="disabled",
-                            wrap="word", bd=4, insertbackground=TEXT_MUT)
-        log_scroll = ttk.Scrollbar(log_frame, orient="vertical",
-                                   command=self._log.yview)
-        self._log.configure(yscrollcommand=log_scroll.set)
-        self._log.pack(side="left", fill="x", expand=True)
-        log_scroll.pack(side="right", fill="y")
+        self._log = ctk.CTkTextbox(parent, height=96, fg_color="#0c0c0c",
+                                   text_color=MUT, border_color=BORDER,
+                                   font=FONT_MONO, corner_radius=6)
+        self._log.pack(fill="x", padx=10, pady=(0, 6))
+        self._log.configure(state="disabled")
 
         self._status_var = tk.StringVar(value="Ready")
-        tk.Label(parent, textvariable=self._status_var, fg=TEXT_MUT,
-                 bg=PANEL_BG, font=FONT_SM, anchor="w",
-                 pady=5).pack(fill="x", padx=12)
+        ctk.CTkLabel(parent, textvariable=self._status_var, text_color=MUT,
+                     font=FONT_SM, anchor="w").pack(fill="x", padx=14, pady=(0, 8))
 
     # ── Format toggle ────────────────────────────────────────────────────────
 
     def _on_format_change(self) -> None:
-        state = "readonly" if self._format_var.get() == "MP4" else "disabled"
-        self._vq_combo.config(state=state)
+        if self._format_var.get() == "MP4":
+            self._vq_combo.configure(state="readonly")
+        else:
+            self._vq_combo.configure(state="disabled")
 
     # ── Runtime init ──────────────────────────────────────────────────────────
 
@@ -690,8 +575,6 @@ class App(tk.Tk):
             pass
         self._cookiefile_var.set(path)
 
-    # ── Queue building ────────────────────────────────────────────────────────
-
     def _valid_cookiefile(self) -> str:
         path = self._cookiefile_var.get().strip()
         if not path:
@@ -704,6 +587,8 @@ class App(tk.Tk):
         except Exception:
             pass
         return ""
+
+    # ── Queue building ────────────────────────────────────────────────────────
 
     def _add_to_queue(self) -> None:
         url = self._url_var.get().strip()
@@ -718,10 +603,11 @@ class App(tk.Tk):
             self._vq_var.get(), list(VIDEO_QUALITY_LABELS.values())[0])
         audio_quality = AUDIO_QUALITY_LABELS.get(
             self._aq_var.get(), list(AUDIO_QUALITY_LABELS.values())[0])
+        delay = self._int_val(self._delay_var, 0)
 
         self._set_status("Fetching YouTube URL info — please wait…")
         self._log_append(f"Fetching: {url}")
-        self._add_btn.set_enabled(False)
+        self._add_btn.configure(state="disabled")
 
         def fetch() -> None:
             try:
@@ -743,18 +629,18 @@ class App(tk.Tk):
                     cookies_from_browser=cookies_from_browser,
                     cookiefile=cookiefile,
                 )
-                self.after(0, lambda: self._enqueue_tasks(tasks))
+                self.after(0, lambda: self._enqueue_tasks(tasks, delay))
             except Exception as exc:
                 msg = _strip_ansi(str(exc))
                 self.after(0, lambda m=msg: self._set_status(f"Error: {m}"))
                 self.after(0, lambda m=msg: self._log_append(f"ERROR: {m}"))
                 self.after(0, lambda m=msg: messagebox.showerror("Fetch Error", m))
             finally:
-                self.after(0, lambda: self._add_btn.set_enabled(True))
+                self.after(0, lambda: self._add_btn.configure(state="normal"))
 
         threading.Thread(target=fetch, daemon=True).start()
 
-    def _enqueue_tasks(self, tasks: list) -> None:
+    def _enqueue_tasks(self, tasks: list, delay: int = 0) -> None:
         if not tasks:
             self._set_status("No videos found at that URL.")
             self._log_append("No downloadable videos found.")
@@ -762,11 +648,9 @@ class App(tk.Tk):
                                    "No downloadable videos were found at that URL.")
             return
 
-        # Apply a from–to range (1-based). Only meaningful for playlists, but
-        # harmless for a single video (start=1 / end=0 keeps everything).
         if len(tasks) > 1:
-            start = max(1, self._range_start_var.get())
-            end = self._range_end_var.get()
+            start = max(1, self._int_val(self._range_start_var, 1))
+            end = self._int_val(self._range_end_var, 0)
             if end <= 0 or end > len(tasks):
                 end = len(tasks)
             if start > 1 or end < len(tasks):
@@ -781,23 +665,21 @@ class App(tk.Tk):
             if task.video_id in self._rows:
                 self._log_append(f"Skipped duplicate: {task.title}")
                 continue
-            task.inter_download_delay = self._delay_var.get()
+            task.inter_download_delay = delay
             self._tasks.append(task)
             self._queue.ensure_pending(task)
-            row = QueueRow(self._scroll_frame, task, callbacks={
+            row = QueueRow(self._scroll, task, callbacks={
                 "on_pause": self._pause_task,
                 "on_resume": self._resume_task,
                 "on_retry": self._retry_task,
                 "on_delete": self._delete_task,
             })
-            row.pack(fill="x")
+            row.pack(fill="x", padx=4, pady=4)
             row.refresh()
             self._rows[task.video_id] = row
             added.append(task)
 
-        self._canvas.update_idletasks()
-        self._canvas.configure(scrollregion=self._canvas.bbox("all"))
-        self._count_lbl.config(text=f"{len(self._tasks)} items")
+        self._count_lbl.configure(text=f"{len(self._tasks)} items")
         self._log_append(f"Added {len(added)} item(s) to queue.")
         self._set_status(f"Added {len(added)} item(s). Click Start to begin.")
         self._update_overall()
@@ -805,9 +687,9 @@ class App(tk.Tk):
     # ── Queue controls ────────────────────────────────────────────────────────
 
     def _apply_throttle(self) -> None:
-        self._queue.max_workers = self._workers_var.get()
-        self._queue.batch_size = self._batch_size_var.get()
-        self._queue.batch_pause = self._batch_pause_var.get()
+        self._queue.max_workers = int(self._workers_var.get()) if hasattr(self, "_workers_var") else 1
+        self._queue.batch_size = self._int_val(self._batch_size_var, 0)
+        self._queue.batch_pause = self._int_val(self._batch_pause_var, 0)
 
     def _start_queue(self) -> None:
         if not self._tasks:
@@ -816,7 +698,7 @@ class App(tk.Tk):
             return
         self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
-        self._log_append(f"Starting downloads ({self._workers_var.get()} concurrent)…")
+        self._log_append(f"Starting downloads ({self._queue.max_workers} concurrent)…")
         self._set_status("Downloading…")
 
     def _pause_queue(self) -> None:
@@ -842,11 +724,11 @@ class App(tk.Tk):
         self._queue.clear()
         self._tasks.clear()
         self._rows.clear()
-        for w in self._scroll_frame.winfo_children():
+        for w in self._scroll.winfo_children():
             w.destroy()
-        self._count_lbl.config(text="0 items")
-        self._overall_var.set(0)
-        self._overall_lbl.config(text="")
+        self._count_lbl.configure(text="0 items")
+        self._overall_bar.set(0)
+        self._overall_lbl.configure(text="")
         self._log_append("Queue cleared.")
         self._set_status("Queue cleared.")
 
@@ -862,7 +744,7 @@ class App(tk.Tk):
             else:
                 still_active.append(task)
         self._tasks = still_active
-        self._count_lbl.config(text=f"{len(self._tasks)} items")
+        self._count_lbl.configure(text=f"{len(self._tasks)} items")
         self._update_overall()
         self._set_status(f"Cleared finished items. {len(self._tasks)} remaining.")
 
@@ -907,14 +789,14 @@ class App(tk.Tk):
         if row:
             row.destroy()
         self._tasks = [t for t in self._tasks if t.video_id != task.video_id]
-        self._count_lbl.config(text=f"{len(self._tasks)} items")
+        self._count_lbl.configure(text=f"{len(self._tasks)} items")
         self._update_overall()
         self._set_status(f"Removed: {task.title[:50]}")
 
     def _clear_log(self) -> None:
-        self._log.config(state="normal")
-        self._log.delete("1.0", "end")
-        self._log.config(state="disabled")
+        self._log.configure(state="normal")
+        self._log.delete("0.0", "end")
+        self._log.configure(state="disabled")
 
     # ── Update helpers ────────────────────────────────────────────────────────
 
@@ -949,8 +831,8 @@ class App(tk.Tk):
         if total is None:
             total = len(self._tasks)
         if total == 0:
-            self._overall_var.set(0)
-            self._overall_lbl.config(text="")
+            self._overall_bar.set(0)
+            self._overall_lbl.configure(text="")
             return
         if completed is None:
             completed = sum(1 for t in self._tasks if t.status == DownloadStatus.COMPLETED)
@@ -963,22 +845,22 @@ class App(tk.Tk):
 
         done = completed + failed + skipped
         pct = (done / total) * 100
-        self._overall_var.set(pct)
-        self._overall_lbl.config(
+        self._overall_bar.set(pct / 100.0)
+        self._overall_lbl.configure(
             text=f"{done}/{total} done  •  {completed} completed  •  "
                  f"{failed} failed  •  {skipped} skipped  •  {paused} paused  •  {pct:.0f}%")
 
     def _sync_buttons(self) -> None:
         running = self._queue.is_running
-        self._start_btn.set_enabled(not running)
-        self._pause_btn.set_enabled(running)
+        self._start_btn.configure(state="normal" if not running else "disabled")
+        self._pause_btn.configure(state="disabled" if not running else "normal")
         self.after(400, self._sync_buttons)
 
     def _log_append(self, msg: str) -> None:
-        self._log.config(state="normal")
+        self._log.configure(state="normal")
         self._log.insert("end", msg + "\n")
         self._log.see("end")
-        self._log.config(state="disabled")
+        self._log.configure(state="disabled")
 
     def _set_status(self, msg: str) -> None:
         self._status_var.set(msg)

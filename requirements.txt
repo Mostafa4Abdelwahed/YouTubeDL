@@ -1,6 +1,7 @@
 # Core
 yt-dlp>=2025.1.0
 requests>=2.31.0
+customtkinter>=5.2.0
 
 # YouTube anti-bot stack (required since YouTube enforced PO Tokens + nsig challenges)
 #   bgutil-ytdlp-pot-provider : yt-dlp plugin that fetches PO Tokens. Runs in
