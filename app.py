@@ -311,8 +311,6 @@ class App(ctk.CTk):
         hdr.pack(fill="x")
         ctk.CTkLabel(hdr, text="▶  YouTube Downloader", text_color=TEXT,
                      font=FONT_HDR, padx=20).pack(side="left")
-        ctk.CTkLabel(hdr, text="Powered by yt-dlp", text_color=MUT,
-                     font=FONT_SM).pack(side="right", padx=20)
 
         body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
         body.pack(fill="both", expand=True, padx=14, pady=10)
