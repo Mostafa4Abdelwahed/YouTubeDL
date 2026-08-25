@@ -412,6 +412,11 @@ class App(ctk.CTk):
                         fg_color=ENTRY, text_color=TEXT, button_color=BORDER,
                         dropdown_fg_color=PANEL, border_color=BORDER,
                         font=FONT_LBL).pack(fill="x", padx=12)
+        ctk.CTkLabel(ck, justify="left", text_color=MUT,
+                     text="Note: Chrome/Edge 127+ block cookie decryption for external apps "
+                          "(DPAPI / App-Bound Encryption). If extraction fails, use "
+                          "'firefox' here or a cookies.txt file below.",
+                     font=FONT_SM).pack(anchor="w", padx=12, pady=(4, 0))
         ctk.CTkLabel(ck, text="Cookies.txt file (alternative)", text_color=MUT,
                      font=FONT_SM).pack(anchor="w", padx=12, pady=(8, 2))
         cfile_row = ctk.CTkFrame(ck, fg_color="transparent")
