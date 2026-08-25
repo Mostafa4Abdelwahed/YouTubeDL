@@ -227,7 +227,7 @@ class App(tk.Tk):
 
         self._set_icon()
 
-        self._queue = DownloadQueue(max_workers=3)
+        self._queue = DownloadQueue(max_workers=1)
         self._queue.on_task_update = self._on_task_update
         self._queue.on_log = self._log_append
         self._rows: dict[str, QueueRow] = {}
@@ -478,7 +478,7 @@ class App(tk.Tk):
                    relief="flat", bd=2, highlightthickness=0).pack(anchor="w")
 
         lbl(opt, "Concurrent Downloads")
-        self._workers_var = tk.IntVar(value=3)
+        self._workers_var = tk.IntVar(value=1)
         tk.Scale(opt, from_=1, to=6, orient="horizontal",
                  variable=self._workers_var, bg=PANEL_BG, fg=TEXT_PRI,
                  troughcolor="#333333", highlightthickness=0,
