@@ -817,7 +817,10 @@ class App(ctk.CTk):
         if task.status == DownloadStatus.COMPLETED:
             self._log_append(f"✓ {task.title}")
         elif task.status == DownloadStatus.FAILED:
-            self._log_append(f"✗ {task.title}: {task.error_message or 'unknown error'}")
+            line = f"✗ {task.title}: {task.error_message or 'unknown error'}"
+            if task.error_suggestion:
+                line += f"  →  {task.error_suggestion}"
+            self._log_append(line)
         elif task.status == DownloadStatus.PAUSED:
             self._log_append(f"⏸ Paused: {task.title}")
 

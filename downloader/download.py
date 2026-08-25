@@ -5,6 +5,7 @@ import yt_dlp
 from typing import Callable, Optional
 from models.task import VideoTask, OutputFormat, DownloadStatus
 from downloader import runtime
+from downloader.errors import classify_error
 from storage import db
 
 MAX_ATTEMPTS = 3
@@ -179,12 +180,14 @@ def download_task(
         except Exception as exc:
             msg = _strip_ansi(str(exc)) or (error_sink[-1] if error_sink else "unknown error")
             if attempt == MAX_ATTEMPTS - 1:
+                info = classify_error(msg)
                 task.status = DownloadStatus.FAILED
-                task.error_message = msg
-                task.speed_str = ""
-                task.eta_str = ""
+                task.error_message = info.title
+                task.error_suggestion = info.suggestion
                 return "failed"
             time.sleep(2 ** attempt)
+
+    return "failed"
 
     return "failed"
 
