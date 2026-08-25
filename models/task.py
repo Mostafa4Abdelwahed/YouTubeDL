@@ -9,6 +9,7 @@ class DownloadStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     SKIPPED = "skipped"
+    PAUSED = "paused"
 
 
 class OutputFormat(Enum):
@@ -66,6 +67,11 @@ class VideoTask:
     cookies_from_browser: Optional[str] = None
     cookiefile: Optional[str] = None
     cancelled: bool = False
+    pause_requested: bool = False
+    speed_str: str = ""
+    eta_str: str = ""
+    current_filename: str = ""
+    final_filename: str = ""
 
     @property
     def is_audio_only(self) -> bool:

@@ -10,6 +10,10 @@ from storage import db
 MAX_ATTEMPTS = 3
 
 
+class _PauseRequested(Exception):
+    """Raised from a progress hook to abort the current download (pause)."""
+
+
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text or "")
 
@@ -100,13 +104,34 @@ def download_task(
     error_sink: list[str] = []
     opts = _build_ydl_opts(task, error_sink)
     task.status = DownloadStatus.DOWNLOADING
+    task.speed_str = ""
+    task.eta_str = ""
 
     seen_files: set[str] = set()
 
     def hook(d: dict) -> None:
+        # Pause request short-circuits everything else.
+        if task.pause_requested:
+            raise _PauseRequested()
+
         fn = d.get("filename", "")
         if fn:
             seen_files.add(os.path.abspath(fn))
+            task.current_filename = os.path.basename(fn)
+
+        if d.get("status") == "downloading":
+            # Prefer the pre-computed percent string
+            pct_str = d.get("_percent_str", "").strip().rstrip("%")
+            try:
+                task.progress = float(pct_str)
+            except (ValueError, AttributeError):
+                downloaded = d.get("downloaded_bytes") or 0
+                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                if total > 0:
+                    task.progress = min((downloaded / total) * 100, 99.9)
+            task.speed_str = d.get("_speed_str", "") or ""
+            task.eta_str = d.get("_eta_str", "") or ""
+
         if progress_hook:
             progress_hook(d)
 
@@ -125,23 +150,36 @@ def download_task(
                 _delete_intermediates(seen_files, filepath)
                 task.status = DownloadStatus.COMPLETED
                 task.progress = 100.0
+                task.speed_str = ""
+                task.eta_str = ""
+                task.final_filename = os.path.basename(filepath)
                 db.mark_downloaded(task.video_id, task.title, task.url,
                                    task.output_format.value, filepath)
-                return True
+                return "completed"
 
             # No real output -> treat as failure
             raise RuntimeError(
-                error_sink[-1] if error_sink else "Download produced no output file")
+                "Download produced no output file")
+
+        except _PauseRequested:
+            # User paused mid-download — keep partial file, mark as paused.
+            task.status = DownloadStatus.PAUSED
+            task.pause_requested = False
+            task.speed_str = ""
+            task.eta_str = ""
+            return "paused"
 
         except Exception as exc:
             msg = _strip_ansi(str(exc)) or (error_sink[-1] if error_sink else "unknown error")
             if attempt == MAX_ATTEMPTS - 1:
                 task.status = DownloadStatus.FAILED
                 task.error_message = msg
-                return False
+                task.speed_str = ""
+                task.eta_str = ""
+                return "failed"
             time.sleep(2 ** attempt)
 
-    return False
+    return "failed"
 
 
 def _delete_intermediates(seen: set[str], merged: str) -> None:

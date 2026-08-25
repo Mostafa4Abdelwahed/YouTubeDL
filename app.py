@@ -9,6 +9,7 @@ from tkinter import ttk, filedialog, messagebox
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
+
 from models.task import (
     OutputFormat,
     VideoQuality,
@@ -24,21 +25,22 @@ from storage import db
 
 
 # YouTube-style dark theme with a red accent palette
-DARK_BG   = "#181818"   # main window background (deep dark)
-PANEL_BG  = "#292929"   # elevated panels / header
-ACCENT    = "#CE0000"   # primary red accent (buttons, progress, selected)
-ACCENT_H  = "#A30003"   # darker red on hover/press
-SECONDARY = "#780002"   # deep red (secondary buttons)
-TEXT_PRI  = "#f1f1f1"   # primary text (near-white)
-TEXT_MUT  = "#aaaaaa"   # muted/secondary text
-SUCCESS   = "#22c55e"   # green — kept semantic (Start, completed)
-WARNING   = "#f59e0b"   # amber — kept semantic (skipped)
-ERROR     = "#F90004"   # bright red — failures / stop
-BORDER    = "#3d3d3d"   # subtle neutral borders
-LOG_BG    = "#0f0f0f"   # near-black log background
-SELECT_BG = "#5a5a5a"   # achromatic grey for text-selection highlight
-PROGRESS  = "#947472"   # progress bar fill (completeness)
-DLOAD_CLR = "#8c9472"   # active-download status dot + percentage text
+DARK_BG   = "#181818"
+PANEL_BG  = "#242424"
+PANEL_BG2 = "#2b2b2b"
+ACCENT    = "#CE0000"
+ACCENT_H  = "#A30003"
+SECONDARY = "#780002"
+TEXT_PRI  = "#f1f1f1"
+TEXT_MUT  = "#9a9a9a"
+SUCCESS   = "#22c55e"
+WARNING   = "#f59e0b"
+ERROR     = "#F90004"
+BORDER    = "#3a3a3a"
+LOG_BG    = "#0f0f0f"
+SELECT_BG = "#5a5a5a"
+PROGRESS  = "#947472"
+DLOAD_CLR = "#8c9472"
 
 FONT_HDR  = ("Segoe UI", 13, "bold")
 FONT_LBL  = ("Segoe UI", 10)
@@ -52,6 +54,7 @@ STATUS_COLOR = {
     DownloadStatus.COMPLETED:   SUCCESS,
     DownloadStatus.FAILED:      ERROR,
     DownloadStatus.SKIPPED:     WARNING,
+    DownloadStatus.PAUSED:      WARNING,
 }
 
 
@@ -84,75 +87,132 @@ class RoundedButton(tk.Button):
         self.config(text=text)
 
 
+class IconButton(tk.Button):
+    """Small square-ish icon button used in queue rows / headers."""
+    def __init__(self, parent, text, command, fg=TEXT_MUT, **kwargs):
+        super().__init__(
+            parent, text=text, command=command,
+            bg=PANEL_BG, fg=fg, relief="flat", bd=0,
+            activebackground=PANEL_BG2, activeforeground=fg,
+            font=("Segoe UI Symbol", 10), cursor="hand2",
+            padx=6, pady=2, takefocus=0,
+        )
+        self._fg = fg
+        self.bind("<Enter>", lambda e: self.config(fg=ACCENT if self._fg != ERROR else ERROR))
+        self.bind("<Leave>", lambda e: self.config(fg=self._fg))
+
+    def set_fg(self, fg):
+        self._fg = fg
+        self.config(fg=fg)
+
+
 class QueueRow(tk.Frame):
-    def __init__(self, parent, task, on_delete=None, **kwargs):
+    def __init__(self, parent, task, callbacks, **kwargs):
         super().__init__(parent, bg=PANEL_BG, **kwargs)
         self.task = task
-        self._on_delete = on_delete
+        self._cb = callbacks
         self._build()
 
     def _build(self) -> None:
-        # Column 1 (title) stretches; the rest are fixed-width.
         self.columnconfigure(1, weight=1)
 
         self._dot = tk.Label(self, text="●", fg=STATUS_COLOR[self.task.status],
                              bg=PANEL_BG, font=FONT_SM)
         self._dot.grid(row=0, column=0, padx=(8, 4), pady=(6, 0), sticky="w")
 
-        title = self.task.title[:70] + "…" if len(self.task.title) > 70 else self.task.title
-        tk.Label(self, text=title, fg=TEXT_PRI, bg=PANEL_BG,
-                 font=FONT_SM, anchor="w").grid(row=0, column=1, sticky="ew", pady=(6, 0))
+        title = self.task.title
+        if len(title) > 70:
+            title = title[:70] + "…"
+        self._title = tk.Label(self, text=title, fg=TEXT_PRI, bg=PANEL_BG,
+                               font=FONT_SM, anchor="w")
+        self._title.grid(row=0, column=1, sticky="ew", pady=(6, 0))
 
         tk.Label(self, text=self.task.output_format.value.upper(),
                  fg=TEXT_MUT, bg=PANEL_BG, font=FONT_SM, width=5).grid(
             row=0, column=2, padx=6)
 
-        self._pct_lbl = tk.Label(self, text="Queued", fg=TEXT_MUT,
-                                  bg=PANEL_BG, font=FONT_SM, width=9, anchor="e")
-        self._pct_lbl.grid(row=0, column=3, padx=(0, 4))
+        # Action buttons (right aligned)
+        self._actions = tk.Frame(self, bg=PANEL_BG)
+        self._actions.grid(row=0, column=3, padx=(0, 8), pady=(6, 0))
 
-        # Trash button (far right) — removes the item, no confirmation.
-        self._del_btn = tk.Button(self, text="🗑", command=self._delete,
-                                  bg=PANEL_BG, fg=TEXT_MUT, relief="flat", bd=0,
-                                  activebackground=PANEL_BG, activeforeground=ERROR,
-                                  font=("Segoe UI Emoji", 10), cursor="hand2",
-                                  padx=2, takefocus=0)
-        self._del_btn.grid(row=0, column=4, padx=(0, 8), pady=(6, 0))
-        self._del_btn.bind("<Enter>", lambda e: self._del_btn.config(fg=ERROR))
-        self._del_btn.bind("<Leave>", lambda e: self._del_btn.config(fg=TEXT_MUT))
+        self._pause_btn = IconButton(self._actions, "⏸", self._cb["on_pause"])
+        self._pause_btn.pack(side="left", padx=(0, 2))
 
-        # Progress bar on second row spanning all columns
+        self._retry_btn = IconButton(self._actions, "↻", self._cb["on_retry"], fg=WARNING)
+        self._retry_btn.pack(side="left", padx=(0, 2))
+
+        self._del_btn = IconButton(self._actions, "🗑", self._cb["on_delete"], fg=TEXT_MUT)
+        self._del_btn.pack(side="left")
+
+        # Progress bar
         self._bar_var = tk.DoubleVar(value=0)
         self._bar = ttk.Progressbar(self, variable=self._bar_var, maximum=100,
                                     mode="determinate")
-        self._bar.grid(row=1, column=0, columnspan=5, sticky="ew", padx=8, pady=(2, 6))
+        self._bar.grid(row=1, column=0, columnspan=4, sticky="ew", padx=8, pady=(2, 2))
+
+        # Info line: speed • ETA • filename / status
+        self._info = tk.Label(self, text="", fg=TEXT_MUT, bg=PANEL_BG,
+                              font=FONT_MONO, anchor="w")
+        self._info.grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 6))
 
         sep = tk.Frame(self, bg=BORDER, height=1)
-        sep.grid(row=2, column=0, columnspan=5, sticky="ew")
-
-    def _delete(self) -> None:
-        if self._on_delete:
-            self._on_delete(self.task)
+        sep.grid(row=3, column=0, columnspan=4, sticky="ew")
 
     def refresh(self) -> None:
         color = STATUS_COLOR.get(self.task.status, TEXT_MUT)
         self._dot.config(fg=color)
 
-        if self.task.status == DownloadStatus.DOWNLOADING:
-            self._pct_lbl.config(text=f"{self.task.progress:.1f}%", fg=DLOAD_CLR)
+        # Progress
+        if self.task.status in (DownloadStatus.COMPLETED, DownloadStatus.SKIPPED):
+            self._bar_var.set(100)
+        elif self.task.status == DownloadStatus.PAUSED:
             self._bar_var.set(self.task.progress)
-        elif self.task.status == DownloadStatus.COMPLETED:
-            self._pct_lbl.config(text="Done", fg=SUCCESS)
-            self._bar_var.set(100)
-        elif self.task.status == DownloadStatus.FAILED:
-            self._pct_lbl.config(text="Failed", fg=ERROR)
-        elif self.task.status == DownloadStatus.SKIPPED:
-            label = "Already DL'd" if self.task.error_message == "Already downloaded" else "Skipped"
-            self._pct_lbl.config(text=label, fg=WARNING)
-            self._bar_var.set(100)
         else:
-            self._pct_lbl.config(text="Queued", fg=TEXT_MUT)
-            self._bar_var.set(0)
+            self._bar_var.set(self.task.progress)
+
+        # Action buttons visibility
+        st = self.task.status
+        if st in (DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING):
+            self._pause_btn.pack(side="left", padx=(0, 2))
+            self._pause_btn.config(text="⏸")
+            self._pause_btn.set_fg(TEXT_MUT)
+            self._retry_btn.pack_forget()
+        elif st == DownloadStatus.PAUSED:
+            self._pause_btn.pack(side="left", padx=(0, 2))
+            self._pause_btn.config(text="▶")
+            self._pause_btn.set_fg(SUCCESS)
+            self._retry_btn.pack_forget()
+        elif st == DownloadStatus.FAILED:
+            self._pause_btn.pack_forget()
+            self._retry_btn.pack(side="left", padx=(0, 2))
+        else:  # COMPLETED / SKIPPED
+            self._pause_btn.pack_forget()
+            self._retry_btn.pack_forget()
+
+        # Info line
+        self._info.config(text=self._info_text())
+
+    def _info_text(self) -> str:
+        st = self.task.status
+        if st == DownloadStatus.DOWNLOADING:
+            parts = []
+            if self.task.speed_str:
+                parts.append(self.task.speed_str)
+            if self.task.eta_str:
+                parts.append(f"ETA {self.task.eta_str}")
+            fn = self.task.current_filename or ""
+            if fn:
+                parts.append(fn)
+            return "  •  ".join(parts)
+        if st == DownloadStatus.COMPLETED:
+            return self.task.final_filename or "Done"
+        if st == DownloadStatus.FAILED:
+            return f"Failed: {self.task.error_message or 'unknown error'}"
+        if st == DownloadStatus.PAUSED:
+            return "Paused"
+        if st == DownloadStatus.SKIPPED:
+            return self.task.error_message or "Skipped"
+        return "Queued"
 
 
 class App(tk.Tk):
@@ -160,10 +220,8 @@ class App(tk.Tk):
         super().__init__()
         self.title("YouTube Downloader")
         self.configure(bg=DARK_BG)
-        self.minsize(900, 560)
+        self.minsize(960, 600)
 
-        # Achromatic grey text-selection highlight (white text stays readable)
-        # for all tk Entry/Text widgets created below.
         self.option_add("*selectBackground", SELECT_BG)
         self.option_add("*selectForeground", TEXT_PRI)
 
@@ -177,37 +235,33 @@ class App(tk.Tk):
         self._build_ui()
         self._apply_styles()
 
-        # Size the window to exactly fit the left controls so the scrollbar
-        # doesn't appear on open, then center it in the screen work area.
         self.update_idletasks()
         header_h = self._header.winfo_reqheight()
         content_h = self._left_inner.winfo_reqheight()
-        needed_h = header_h + content_h + 28   # body pady + small breathing room
-        self._center_window(1100, needed_h)
+        needed_h = header_h + content_h + 28
+        self._center_window(1180, needed_h)
 
         self.after(500, self._validate_cookie_state)
         self.after(600, self._init_runtime)
 
-        # Clean shutdown: stop downloads and fully terminate the (possibly
-        # headless) process when the window is closed — no orphaned process.
+        # Periodically sync Start/Pause button states with the queue.
+        self._sync_buttons()
+
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _on_close(self) -> None:
         try:
-            self._queue.stop()      # cancel in-progress downloads / executor
+            self._queue.stop()
         except Exception:
             pass
         try:
             self.destroy()
         finally:
-            # Force-exit so no worker threads or ffmpeg/deno subprocesses keep
-            # the background process alive after the GUI is gone.
             os._exit(0)
 
     # ── Window placement ─────────────────────────────────────────────────────
 
     def _center_window(self, width: int, height: int) -> None:
-        """Center the window in the screen work area (above the taskbar)."""
         work_left = work_top = 0
         work_w = self.winfo_screenwidth()
         work_h = self.winfo_screenheight()
@@ -221,7 +275,6 @@ class App(tk.Tk):
                                 ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
 
                 rect = RECT()
-                # SPI_GETWORKAREA = 0x0030 -> usable area excluding the taskbar
                 if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
                     work_left, work_top = rect.left, rect.top
                     work_w = rect.right - rect.left
@@ -229,7 +282,6 @@ class App(tk.Tk):
             except Exception:
                 pass
 
-        # Clamp to the work area, then center within it
         width = min(width, work_w)
         height = min(height, work_h)
         x = work_left + (work_w - width) // 2
@@ -264,7 +316,7 @@ class App(tk.Tk):
         except Exception:
             pass
 
-    # ── UI Build ─────────────────────────────────────────────────────────────
+    # ── Styles ──────────────────────────────────────────────────────────────
 
     def _apply_styles(self) -> None:
         s = ttk.Style(self)
@@ -276,18 +328,16 @@ class App(tk.Tk):
                     arrowcolor=TEXT_MUT)
         s.map("TCombobox", fieldbackground=[("readonly", PANEL_BG)])
 
-        # Overall progress bar fill (top of queue panel)
         s.configure("Overall.Horizontal.TProgressbar",
                     troughcolor=BORDER, background=PROGRESS,
                     darkcolor=PROGRESS, lightcolor=PROGRESS, bordercolor=PANEL_BG)
-        # Per-item progress bars use the default Horizontal.TProgressbar style —
-        # configure it so their fill is PROGRESS on a dark trough (was cream/white).
         s.configure("Horizontal.TProgressbar",
                     troughcolor=BORDER, background=PROGRESS,
                     darkcolor=PROGRESS, lightcolor=PROGRESS, bordercolor=PANEL_BG)
 
+    # ── UI Build ────────────────────────────────────────────────────────────
+
     def _build_ui(self) -> None:
-        # Header
         hdr = tk.Frame(self, bg=PANEL_BG, pady=12)
         hdr.pack(fill="x")
         self._header = hdr
@@ -299,8 +349,7 @@ class App(tk.Tk):
         body = tk.Frame(self, bg=DARK_BG)
         body.pack(fill="both", expand=True, padx=16, pady=10)
 
-        # Left panel — scrollbar AUTO-HIDES when all controls fit (no scroll on open)
-        left_outer = tk.Frame(body, bg=DARK_BG, width=300)
+        left_outer = tk.Frame(body, bg=DARK_BG, width=320)
         left_outer.pack(side="left", fill="y", padx=(0, 12))
         left_outer.pack_propagate(False)
         left_outer.grid_columnconfigure(0, weight=1)
@@ -319,15 +368,14 @@ class App(tk.Tk):
             left_canvas.update_idletasks()
             content_h = left.winfo_reqheight()
             view_h = left_canvas.winfo_height()
-            # Keep the inner frame as wide as the canvas (so controls fill the width)
             left_canvas.itemconfigure(left_window, width=left_canvas.winfo_width())
             if content_h > view_h + 1:
                 left_canvas.configure(scrollregion=(0, 0, 0, content_h))
-                left_sb.grid()                       # show scrollbar
+                left_sb.grid()
             else:
                 left_canvas.yview_moveto(0)
                 left_canvas.configure(scrollregion=(0, 0, 0, view_h))
-                left_sb.grid_remove()                # hide scrollbar entirely
+                left_sb.grid_remove()
 
         left.bind("<Configure>", _sync_left_scroll)
         left_canvas.bind("<Configure>", _sync_left_scroll)
@@ -341,12 +389,22 @@ class App(tk.Tk):
         self._build_queue_panel(right)
 
     def _build_controls(self, parent: tk.Frame) -> None:
-        def lbl(text):
-            tk.Label(parent, text=text, fg=TEXT_MUT, bg=DARK_BG,
-                     font=FONT_SM).pack(anchor="w", pady=(12, 2))
+        def card(parent, title=None):
+            c = tk.Frame(parent, bg=PANEL_BG, padx=12, pady=10)
+            c.pack(fill="x", pady=(0, 10))
+            if title:
+                tk.Label(c, text=title, fg=TEXT_PRI, bg=PANEL_BG,
+                         font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 6))
+            return c
 
-        lbl("YouTube URL or Playlist URL")
-        url_wrap = tk.Frame(parent, bg=PANEL_BG,
+        def lbl(c, text):
+            tk.Label(c, text=text, fg=TEXT_MUT, bg=PANEL_BG,
+                     font=FONT_SM).pack(anchor="w", pady=(6, 2))
+
+        # ── Source card ──
+        src = card(parent, "Source")
+        lbl(src, "YouTube URL or Playlist URL")
+        url_wrap = tk.Frame(src, bg=PANEL_BG,
                             highlightbackground=BORDER, highlightthickness=1)
         url_wrap.pack(fill="x")
         self._url_var = tk.StringVar()
@@ -354,32 +412,34 @@ class App(tk.Tk):
                  fg=TEXT_PRI, insertbackground=TEXT_PRI,
                  font=FONT_LBL, relief="flat", bd=6).pack(fill="x")
 
-        lbl("Output Format")
-        fmt_row = tk.Frame(parent, bg=DARK_BG)
+        # ── Options card ──
+        opt = card(parent, "Options")
+        lbl(opt, "Output Format")
+        fmt_row = tk.Frame(opt, bg=PANEL_BG)
         fmt_row.pack(fill="x")
         self._format_var = tk.StringVar(value="MP4")
         for fmt in ("MP4", "MP3", "AAC"):
             tk.Radiobutton(fmt_row, text=fmt, variable=self._format_var, value=fmt,
                            command=self._on_format_change,
-                           bg=DARK_BG, fg=TEXT_PRI, selectcolor="#2e2e2d",
-                           activebackground=DARK_BG, activeforeground=TEXT_PRI,
+                           bg=PANEL_BG, fg=TEXT_PRI, selectcolor="#333333",
+                           activebackground=PANEL_BG, activeforeground=TEXT_PRI,
                            font=FONT_LBL).pack(side="left", padx=(0, 6))
 
-        lbl("Video Quality")
+        lbl(opt, "Video Quality")
         self._vq_var = tk.StringVar(value="RAW (Best)")
-        self._vq_combo = ttk.Combobox(parent, textvariable=self._vq_var,
+        self._vq_combo = ttk.Combobox(opt, textvariable=self._vq_var,
                                       values=list(VIDEO_QUALITY_LABELS.keys()),
                                       state="readonly", font=FONT_LBL)
         self._vq_combo.pack(fill="x")
 
-        lbl("Audio Quality")
+        lbl(opt, "Audio Quality")
         self._aq_var = tk.StringVar(value="320 kbps")
-        ttk.Combobox(parent, textvariable=self._aq_var,
+        ttk.Combobox(opt, textvariable=self._aq_var,
                      values=list(AUDIO_QUALITY_LABELS.keys()),
                      state="readonly", font=FONT_LBL).pack(fill="x")
 
-        lbl("Output Folder")
-        dir_row = tk.Frame(parent, bg=DARK_BG)
+        lbl(opt, "Output Folder")
+        dir_row = tk.Frame(opt, bg=PANEL_BG)
         dir_row.pack(fill="x")
         self._dir_var = tk.StringVar(value=os.path.abspath("downloads"))
         tk.Entry(dir_row, textvariable=self._dir_var, bg=PANEL_BG, fg=TEXT_PRI,
@@ -391,20 +451,27 @@ class App(tk.Tk):
                   padx=6, cursor="hand2").pack(side="left", padx=(4, 0))
 
         self._skip_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(parent, text="Skip already-downloaded videos",
-                       variable=self._skip_var, bg=DARK_BG, fg=TEXT_MUT,
-                       selectcolor="#2e2e2d", activebackground=DARK_BG,
+        tk.Checkbutton(opt, text="Skip already-downloaded videos",
+                       variable=self._skip_var, bg=PANEL_BG, fg=TEXT_MUT,
+                       selectcolor="#333333", activebackground=PANEL_BG,
                        activeforeground=TEXT_PRI, font=FONT_SM).pack(
             anchor="w", pady=(8, 0))
 
-        lbl("Browser Cookies  (fixes bot detection)")
+        lbl(opt, "Concurrent Downloads")
+        self._workers_var = tk.IntVar(value=3)
+        tk.Scale(opt, from_=1, to=6, orient="horizontal",
+                 variable=self._workers_var, bg=PANEL_BG, fg=TEXT_PRI,
+                 troughcolor="#333333", highlightthickness=0,
+                 sliderrelief="flat", activebackground=ACCENT).pack(fill="x")
+
+        # ── Cookies card ──
+        ck = card(parent, "Cookies (fixes bot detection)")
         self._cookies_var = tk.StringVar(value="None")
-        ttk.Combobox(parent, textvariable=self._cookies_var,
+        ttk.Combobox(ck, textvariable=self._cookies_var,
                      values=["None", "chrome", "firefox", "edge", "brave", "opera", "chromium"],
                      state="readonly", font=FONT_LBL).pack(fill="x")
-
-        lbl("Cookies.txt file  (alternative to browser cookies)")
-        cfile_row = tk.Frame(parent, bg=DARK_BG)
+        lbl(ck, "Cookies.txt file (alternative)")
+        cfile_row = tk.Frame(ck, bg=PANEL_BG)
         cfile_row.pack(fill="x")
         self._cookiefile_var = tk.StringVar(value="")
         tk.Entry(cfile_row, textvariable=self._cookiefile_var, bg=PANEL_BG,
@@ -415,37 +482,32 @@ class App(tk.Tk):
                   bg=BORDER, fg=TEXT_PRI, relief="flat", font=FONT_LBL,
                   padx=6, cursor="hand2").pack(side="left", padx=(4, 0))
         tk.Button(cfile_row, text="✕", command=lambda: self._cookiefile_var.set(""),
-                  bg="#2e2e2d", fg=TEXT_PRI, relief="flat", font=FONT_SM,
+                  bg="#333333", fg=TEXT_PRI, relief="flat", font=FONT_SM,
                   padx=4, cursor="hand2").pack(side="left", padx=(2, 0))
-        tk.Label(parent,
-                 text="Must be Netscape format. Use 'Get cookies.txt LOCALLY' extension.",
-                 fg=TEXT_MUT, bg=DARK_BG, font=("Segoe UI", 7),
-                 wraplength=260, justify="left").pack(anchor="w")
+        tk.Label(ck,
+                 text="Netscape format. Use 'Get cookies.txt LOCALLY' extension.",
+                 fg=TEXT_MUT, bg=PANEL_BG, font=("Segoe UI", 7),
+                 wraplength=280, justify="left").pack(anchor="w")
 
-        lbl("Concurrent Downloads")
-        self._workers_var = tk.IntVar(value=3)
-        tk.Scale(parent, from_=1, to=6, orient="horizontal",
-                 variable=self._workers_var, bg=DARK_BG, fg=TEXT_PRI,
-                 troughcolor=PANEL_BG, highlightthickness=0,
-                 sliderrelief="flat", activebackground=ACCENT).pack(fill="x")
-
-        btn_row = tk.Frame(parent, bg=DARK_BG)
-        btn_row.pack(fill="x", pady=(10, 0))
-        self._dl_btn = RoundedButton(btn_row, "Add to Queue", self._add_to_queue,
-                                     bg="#525252", hover_bg="#636363")
-        self._dl_btn.pack(side="left", fill="x", expand=True)
-        RoundedButton(btn_row, "Start", self._start_queue,
-                      bg="#787878", hover_bg="#8a8a8a").pack(
-            side="left", fill="x", expand=True, padx=(6, 0))
-        RoundedButton(btn_row, "Stop", self._stop_queue,
-                      bg="#3c3c3c", hover_bg="#4a4a4a").pack(
-            side="left", fill="x", expand=True, padx=(6, 0))
-
-        RoundedButton(parent, "Clear Queue", self._clear_queue,
-                      bg=SECONDARY, hover_bg=ACCENT_H).pack(fill="x", pady=(8, 0))
+        # ── Action buttons ──
+        actions = card(parent, "Actions")
+        self._add_btn = RoundedButton(actions, "＋  Add to Queue", self._add_to_queue,
+                                      bg="#525252", hover_bg="#636363")
+        self._add_btn.pack(fill="x", pady=(0, 6))
+        self._start_btn = RoundedButton(actions, "▶  Start", self._start_queue,
+                                        bg=SUCCESS, hover_bg="#1ca44e")
+        self._start_btn.pack(fill="x", pady=(0, 6))
+        self._pause_btn = RoundedButton(actions, "⏸  Pause", self._pause_queue,
+                                        bg="#787878", hover_bg="#8a8a8a")
+        self._pause_btn.pack(fill="x", pady=(0, 6))
+        self._retry_btn = RoundedButton(actions, "↻  Retry Failed", self._retry_failed,
+                                        bg="#525252", hover_bg="#636363")
+        self._retry_btn.pack(fill="x", pady=(0, 6))
+        self._clear_btn = RoundedButton(actions, "🗑  Clear Queue", self._clear_queue,
+                                        bg=SECONDARY, hover_bg=ACCENT_H)
+        self._clear_btn.pack(fill="x")
 
     def _build_queue_panel(self, parent: tk.Frame) -> None:
-        # Header row
         hdr = tk.Frame(parent, bg=PANEL_BG)
         hdr.pack(fill="x", padx=12, pady=(10, 4))
         tk.Label(hdr, text="Download Queue", fg=TEXT_PRI,
@@ -454,7 +516,6 @@ class App(tk.Tk):
                                    bg=PANEL_BG, font=FONT_SM)
         self._count_lbl.pack(side="right")
 
-        # Overall progress bar
         prog_frame = tk.Frame(parent, bg=PANEL_BG)
         prog_frame.pack(fill="x", padx=12, pady=(0, 4))
         self._overall_var = tk.DoubleVar(value=0)
@@ -468,7 +529,6 @@ class App(tk.Tk):
 
         tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=12)
 
-        # Scrollable item list
         container = tk.Frame(parent, bg=PANEL_BG)
         container.pack(fill="both", expand=True, padx=4, pady=(4, 0))
 
@@ -482,7 +542,6 @@ class App(tk.Tk):
                 scrollregion=self._canvas.bbox("all")))
         self._scroll_window = self._canvas.create_window(
             (0, 0), window=self._scroll_frame, anchor="nw")
-        # Make the inner frame fill the canvas width so rows span the full panel.
         self._canvas.bind(
             "<Configure>",
             lambda e: self._canvas.itemconfigure(self._scroll_window, width=e.width))
@@ -490,12 +549,10 @@ class App(tk.Tk):
         self._canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        # Bind mouse wheel
         self._canvas.bind_all("<MouseWheel>",
                               lambda e: self._canvas.yview_scroll(
                                   int(-1 * (e.delta / 120)), "units"))
 
-        # Log panel
         tk.Frame(parent, bg=BORDER, height=1).pack(fill="x", padx=12, pady=(4, 0))
         log_hdr = tk.Frame(parent, bg=PANEL_BG)
         log_hdr.pack(fill="x", padx=12, pady=(4, 2))
@@ -519,20 +576,20 @@ class App(tk.Tk):
         self._log.pack(side="left", fill="x", expand=True)
         log_scroll.pack(side="right", fill="y")
 
-        # Status bar
         self._status_var = tk.StringVar(value="Ready")
         tk.Label(parent, textvariable=self._status_var, fg=TEXT_MUT,
                  bg=PANEL_BG, font=FONT_SM, anchor="w",
                  pady=5).pack(fill="x", padx=12)
 
-    # ── Actions ──────────────────────────────────────────────────────────────
+    # ── Format toggle ────────────────────────────────────────────────────────
 
     def _on_format_change(self) -> None:
         state = "readonly" if self._format_var.get() == "MP4" else "disabled"
         self._vq_combo.config(state=state)
 
+    # ── Runtime init ──────────────────────────────────────────────────────────
+
     def _init_runtime(self) -> None:
-        """Set up Deno + verify PO token provider in a background thread."""
         def work():
             status = runtime.setup(log=lambda m: self.after(0, lambda msg=m: self._log_append(msg)))
             missing = []
@@ -550,7 +607,6 @@ class App(tk.Tk):
         threading.Thread(target=work, daemon=True).start()
 
     def _validate_cookie_state(self) -> None:
-        """On startup, clear any stored cookiefile path that isn't valid Netscape format."""
         path = self._cookiefile_var.get().strip()
         if not path:
             return
@@ -566,6 +622,8 @@ class App(tk.Tk):
         except Exception:
             self._cookiefile_var.set("")
 
+    # ── Browsers ──────────────────────────────────────────────────────────────
+
     def _browse_dir(self) -> None:
         path = filedialog.askdirectory(initialdir=self._dir_var.get())
         if path:
@@ -578,7 +636,6 @@ class App(tk.Tk):
         )
         if not path:
             return
-        # Validate Netscape cookie format
         try:
             with open(path, "r", encoding="utf-8", errors="ignore") as f:
                 first_line = f.readline().strip()
@@ -594,6 +651,21 @@ class App(tk.Tk):
         except Exception:
             pass
         self._cookiefile_var.set(path)
+
+    # ── Queue building ────────────────────────────────────────────────────────
+
+    def _valid_cookiefile(self) -> str:
+        path = self._cookiefile_var.get().strip()
+        if not path:
+            return ""
+        try:
+            with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                first = f.readline().strip()
+            if "Netscape" in first or "HTTP Cookie" in first:
+                return path
+        except Exception:
+            pass
+        return ""
 
     def _add_to_queue(self) -> None:
         url = self._url_var.get().strip()
@@ -611,7 +683,7 @@ class App(tk.Tk):
 
         self._set_status("Fetching YouTube URL info — please wait…")
         self._log_append(f"Fetching: {url}")
-        self._dl_btn.set_enabled(False)
+        self._add_btn.set_enabled(False)
 
         def fetch() -> None:
             try:
@@ -620,26 +692,7 @@ class App(tk.Tk):
 
                 browser = self._cookies_var.get()
                 cookies_from_browser = browser if browser != "None" else None
-
-                cookiefile = self._cookiefile_var.get().strip() or None
-                if cookiefile:
-                    try:
-                        with open(cookiefile, "r", encoding="utf-8", errors="ignore") as f:
-                            first = f.readline().strip()
-                        if "Netscape" not in first and "HTTP Cookie" not in first:
-                            self.after(0, lambda: self._cookiefile_var.set(""))
-                            self.after(0, lambda: messagebox.showerror(
-                                "Invalid cookies.txt",
-                                "The selected file is not Netscape format and has been cleared.\n\n"
-                                "Export cookies using the 'Get cookies.txt LOCALLY' Chrome extension:\n"
-                                "1. Install the extension\n"
-                                "2. Go to youtube.com while logged in\n"
-                                "3. Click the extension icon → Export\n"
-                                "4. Select the saved .txt file here"
-                            ))
-                            cookiefile = None
-                    except Exception:
-                        cookiefile = None
+                cookiefile = self._valid_cookiefile() or None
 
                 tasks = build_tasks(
                     url=url,
@@ -659,7 +712,7 @@ class App(tk.Tk):
                 self.after(0, lambda m=msg: self._log_append(f"ERROR: {m}"))
                 self.after(0, lambda m=msg: messagebox.showerror("Fetch Error", m))
             finally:
-                self.after(0, lambda: self._dl_btn.set_enabled(True))
+                self.after(0, lambda: self._add_btn.set_enabled(True))
 
         threading.Thread(target=fetch, daemon=True).start()
 
@@ -677,34 +730,54 @@ class App(tk.Tk):
                 self._log_append(f"Skipped duplicate: {task.title}")
                 continue
             self._tasks.append(task)
-            self._queue.add(task)
-            row = QueueRow(self._scroll_frame, task, on_delete=self._delete_task)
+            self._queue.ensure_pending(task)
+            row = QueueRow(self._scroll_frame, task, callbacks={
+                "on_pause": self._pause_task,
+                "on_resume": self._resume_task,
+                "on_retry": self._retry_task,
+                "on_delete": self._delete_task,
+            })
             row.pack(fill="x")
+            row.refresh()
             self._rows[task.video_id] = row
             added.append(task)
-        tasks = added
 
         self._canvas.update_idletasks()
         self._canvas.configure(scrollregion=self._canvas.bbox("all"))
         self._count_lbl.config(text=f"{len(self._tasks)} items")
-        self._log_append(f"Added {len(tasks)} item(s) to queue.")
-        self._set_status(f"Added {len(tasks)} item(s). Click Start to begin.")
+        self._log_append(f"Added {len(added)} item(s) to queue.")
+        self._set_status(f"Added {len(added)} item(s). Click Start to begin.")
         self._update_overall()
+
+    # ── Queue controls ────────────────────────────────────────────────────────
 
     def _start_queue(self) -> None:
         if not self._tasks:
             messagebox.showinfo("Queue Empty",
                                 "Add items to the queue first, then click Start.")
             return
-        self._queue._max_workers = self._workers_var.get()
+        self._queue.max_workers = self._workers_var.get()
         self._queue.start(skip_downloaded=self._skip_var.get())
         self._log_append(f"Starting downloads ({self._workers_var.get()} concurrent)…")
         self._set_status("Downloading…")
 
-    def _stop_queue(self) -> None:
-        self._queue.stop()
-        self._log_append("Stopped by user.")
-        self._set_status("Stopped.")
+    def _pause_queue(self) -> None:
+        self._queue.pause_all()
+        self._log_append("Queue paused — you can resume anytime.")
+        self._set_status("Paused.")
+
+    def _retry_failed(self) -> None:
+        failed = [t for t in self._tasks if t.status == DownloadStatus.FAILED]
+        if not failed:
+            messagebox.showinfo("Nothing to Retry", "No failed items in the queue.")
+            return
+        for task in failed:
+            self._reset_task(task)
+            self._queue.ensure_pending(task)
+        self._queue.max_workers = self._workers_var.get()
+        self._queue.start(skip_downloaded=self._skip_var.get())
+        self._log_append(f"Retrying {len(failed)} failed item(s)…")
+        self._set_status(f"Retrying {len(failed)} item(s)…")
 
     def _clear_queue(self) -> None:
         self._queue.stop()
@@ -720,7 +793,8 @@ class App(tk.Tk):
         self._set_status("Queue cleared.")
 
     def _clear_done(self) -> None:
-        finished = {DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.SKIPPED}
+        finished = {DownloadStatus.COMPLETED, DownloadStatus.FAILED,
+                    DownloadStatus.SKIPPED}
         still_active = []
         for task in self._tasks:
             if task.status in finished:
@@ -734,9 +808,43 @@ class App(tk.Tk):
         self._update_overall()
         self._set_status(f"Cleared finished items. {len(self._tasks)} remaining.")
 
+    # ── Per-item controls ─────────────────────────────────────────────────────
+
+    def _pause_task(self, task) -> None:
+        if task.status == DownloadStatus.DOWNLOADING:
+            task.pause_requested = True
+        elif task.status == DownloadStatus.QUEUED:
+            task.status = DownloadStatus.PAUSED
+            self._refresh_row(task)
+
+    def _resume_task(self, task) -> None:
+        if task.status not in (DownloadStatus.PAUSED, DownloadStatus.FAILED,
+                               DownloadStatus.QUEUED):
+            return
+        self._reset_task(task)
+        self._queue.ensure_pending(task)
+        self._queue.max_workers = self._workers_var.get()
+        self._queue.start(skip_downloaded=self._skip_var.get())
+
+    def _retry_task(self, task) -> None:
+        self._reset_task(task)
+        self._queue.ensure_pending(task)
+        self._queue.max_workers = self._workers_var.get()
+        self._queue.start(skip_downloaded=self._skip_var.get())
+
+    def _reset_task(self, task) -> None:
+        task.status = DownloadStatus.QUEUED
+        task.progress = 0.0
+        task.error_message = None
+        task.pause_requested = False
+        task.cancelled = False
+        task.speed_str = ""
+        task.eta_str = ""
+        task.current_filename = ""
+        self._refresh_row(task)
+
     def _delete_task(self, task) -> None:
-        """Remove a single item from the queue immediately (no confirmation)."""
-        task.cancelled = True   # so it's skipped if the worker hasn't reached it yet
+        task.cancelled = True
         row = self._rows.pop(task.video_id, None)
         if row:
             row.destroy()
@@ -763,18 +871,23 @@ class App(tk.Tk):
         completed = sum(1 for t in self._tasks if t.status == DownloadStatus.COMPLETED)
         failed    = sum(1 for t in self._tasks if t.status == DownloadStatus.FAILED)
         skipped   = sum(1 for t in self._tasks if t.status == DownloadStatus.SKIPPED)
+        paused    = sum(1 for t in self._tasks if t.status == DownloadStatus.PAUSED)
         total     = len(self._tasks)
 
         if task.status == DownloadStatus.COMPLETED:
             self._log_append(f"✓ {task.title}")
         elif task.status == DownloadStatus.FAILED:
             self._log_append(f"✗ {task.title}: {task.error_message or 'unknown error'}")
+        elif task.status == DownloadStatus.PAUSED:
+            self._log_append(f"⏸ Paused: {task.title}")
 
-        self._update_overall(completed, failed, skipped, total)
+        self._update_overall(completed, failed, skipped, paused, total)
         self._set_status(
-            f"Completed: {completed}  Failed: {failed}  Skipped: {skipped}  Total: {total}")
+            f"Completed: {completed}  Failed: {failed}  "
+            f"Skipped: {skipped}  Paused: {paused}  Total: {total}")
 
-    def _update_overall(self, completed=None, failed=None, skipped=None, total=None) -> None:
+    def _update_overall(self, completed=None, failed=None, skipped=None,
+                        paused=None, total=None) -> None:
         if total is None:
             total = len(self._tasks)
         if total == 0:
@@ -787,13 +900,21 @@ class App(tk.Tk):
             failed = sum(1 for t in self._tasks if t.status == DownloadStatus.FAILED)
         if skipped is None:
             skipped = sum(1 for t in self._tasks if t.status == DownloadStatus.SKIPPED)
+        if paused is None:
+            paused = sum(1 for t in self._tasks if t.status == DownloadStatus.PAUSED)
 
         done = completed + failed + skipped
         pct = (done / total) * 100
         self._overall_var.set(pct)
         self._overall_lbl.config(
             text=f"{done}/{total} done  •  {completed} completed  •  "
-                 f"{failed} failed  •  {skipped} skipped  •  {pct:.0f}%")
+                 f"{failed} failed  •  {skipped} skipped  •  {paused} paused  •  {pct:.0f}%")
+
+    def _sync_buttons(self) -> None:
+        running = self._queue.is_running
+        self._start_btn.set_enabled(not running)
+        self._pause_btn.set_enabled(running)
+        self.after(400, self._sync_buttons)
 
     def _log_append(self, msg: str) -> None:
         self._log.config(state="normal")
