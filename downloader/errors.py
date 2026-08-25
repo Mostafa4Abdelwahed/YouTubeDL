@@ -23,6 +23,12 @@ _RULES = [
      "Unavailable / private / geo-blocked",
      "The video is private, deleted, or blocked in your region."),
 
+    ("could not copy .*cookie database|cookie database|failed to extract cookies|"
+     "cookiesfrombrowser|unable to find cookie|no cookie",
+     "Browser cookie database is locked",
+     "Close the browser completely (all windows AND background processes) and retry, "
+     "or export a cookies.txt with the 'Get cookies.txt LOCALLY' extension and use that instead."),
+
     ("age.?restricted|confirm you.?re not a bot|sign in to confirm|"
      "inappropriate for some users|verify you.?re a human|unusual traffic|"
      "this helps protect our community|too many requests|http error 429|"

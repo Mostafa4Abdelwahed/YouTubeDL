@@ -1,6 +1,7 @@
 import os
 import re
 import sys
+import subprocess
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -575,6 +576,22 @@ class App(ctk.CTk):
             pass
         self._cookiefile_var.set(path)
 
+    def _browser_running(self, browser: str) -> bool:
+        if sys.platform != "win32":
+            return False
+        exe = {
+            "chrome": "chrome.exe", "firefox": "firefox.exe", "edge": "msedge.exe",
+            "brave": "brave.exe", "opera": "opera.exe", "chromium": "chrome.exe",
+        }.get(browser)
+        if not exe:
+            return False
+        try:
+            out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {exe}"],
+                                 capture_output=True, text=True, timeout=5).stdout
+            return exe.lower() in out.lower()
+        except Exception:
+            return False
+
     def _valid_cookiefile(self) -> str:
         path = self._cookiefile_var.get().strip()
         if not path:
@@ -617,6 +634,19 @@ class App(ctk.CTk):
                 browser = self._cookies_var.get()
                 cookies_from_browser = browser if browser != "None" else None
                 cookiefile = self._valid_cookiefile() or None
+
+                if cookies_from_browser and self._browser_running(cookies_from_browser):
+                    self._log_append(
+                        f"WARNING: {cookies_from_browser} is running — cookie extraction "
+                        f"may fail ('Could not copy cookie database'). Close it and retry, "
+                        f"or use a cookies.txt file.")
+                    messagebox.showwarning(
+                        "Browser Still Running",
+                        f"{cookies_from_browser.title()} is currently open.\n\n"
+                        "yt-dlp cannot copy its cookie database while the browser is running.\n\n"
+                        f"Close {cookies_from_browser.title()} completely (including any background "
+                        "processes in Task Manager) and click Add again — or use a cookies.txt file "
+                        "exported with the 'Get cookies.txt LOCALLY' extension instead.")
 
                 tasks = build_tasks(
                     url=url,
