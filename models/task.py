@@ -72,6 +72,7 @@ class VideoTask:
     eta_str: str = ""
     current_filename: str = ""
     final_filename: str = ""
+    inter_download_delay: int = 0
 
     @property
     def is_audio_only(self) -> bool:

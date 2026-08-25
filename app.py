@@ -229,6 +229,7 @@ class App(tk.Tk):
 
         self._queue = DownloadQueue(max_workers=3)
         self._queue.on_task_update = self._on_task_update
+        self._queue.on_log = self._log_append
         self._rows: dict[str, QueueRow] = {}
         self._tasks: list = []
 
@@ -456,6 +457,25 @@ class App(tk.Tk):
                        selectcolor="#333333", activebackground=PANEL_BG,
                        activeforeground=TEXT_PRI, font=FONT_SM).pack(
             anchor="w", pady=(8, 0))
+
+        # ── Throttling (avoid IP ban) ──
+        lbl(opt, "Delay between downloads (sec)")
+        self._delay_var = tk.IntVar(value=0)
+        tk.Spinbox(opt, from_=0, to=120, textvariable=self._delay_var,
+                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=8,
+                   relief="flat", bd=2, highlightthickness=0).pack(anchor="w")
+
+        lbl(opt, "Pause after every N videos")
+        self._batch_size_var = tk.IntVar(value=10)
+        tk.Spinbox(opt, from_=0, to=200, textvariable=self._batch_size_var,
+                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=8,
+                   relief="flat", bd=2, highlightthickness=0).pack(anchor="w")
+
+        lbl(opt, "Batch pause duration (sec)")
+        self._batch_pause_var = tk.IntVar(value=60)
+        tk.Spinbox(opt, from_=0, to=3600, textvariable=self._batch_pause_var,
+                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=8,
+                   relief="flat", bd=2, highlightthickness=0).pack(anchor="w")
 
         lbl(opt, "Concurrent Downloads")
         self._workers_var = tk.IntVar(value=3)
@@ -729,6 +749,7 @@ class App(tk.Tk):
             if task.video_id in self._rows:
                 self._log_append(f"Skipped duplicate: {task.title}")
                 continue
+            task.inter_download_delay = self._delay_var.get()
             self._tasks.append(task)
             self._queue.ensure_pending(task)
             row = QueueRow(self._scroll_frame, task, callbacks={
@@ -751,12 +772,17 @@ class App(tk.Tk):
 
     # ── Queue controls ────────────────────────────────────────────────────────
 
+    def _apply_throttle(self) -> None:
+        self._queue.max_workers = self._workers_var.get()
+        self._queue.batch_size = self._batch_size_var.get()
+        self._queue.batch_pause = self._batch_pause_var.get()
+
     def _start_queue(self) -> None:
         if not self._tasks:
             messagebox.showinfo("Queue Empty",
                                 "Add items to the queue first, then click Start.")
             return
-        self._queue.max_workers = self._workers_var.get()
+        self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
         self._log_append(f"Starting downloads ({self._workers_var.get()} concurrent)…")
         self._set_status("Downloading…")
@@ -774,7 +800,7 @@ class App(tk.Tk):
         for task in failed:
             self._reset_task(task)
             self._queue.ensure_pending(task)
-        self._queue.max_workers = self._workers_var.get()
+        self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
         self._log_append(f"Retrying {len(failed)} failed item(s)…")
         self._set_status(f"Retrying {len(failed)} item(s)…")
@@ -823,13 +849,13 @@ class App(tk.Tk):
             return
         self._reset_task(task)
         self._queue.ensure_pending(task)
-        self._queue.max_workers = self._workers_var.get()
+        self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
 
     def _retry_task(self, task) -> None:
         self._reset_task(task)
         self._queue.ensure_pending(task)
-        self._queue.max_workers = self._workers_var.get()
+        self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
 
     def _reset_task(self, task) -> None:

@@ -76,6 +76,11 @@ def _build_ydl_opts(task: VideoTask, error_sink: list) -> dict:
         opts["format"] = task.video_quality.value
         opts["merge_output_format"] = "mp4"
 
+    # Throttle requests to avoid YouTube IP rate-limiting / bot detection.
+    if getattr(task, "inter_download_delay", 0) and task.inter_download_delay > 0:
+        opts["sleep_interval"] = task.inter_download_delay
+        opts["max_sleep_interval"] = task.inter_download_delay
+
     return opts
 
 

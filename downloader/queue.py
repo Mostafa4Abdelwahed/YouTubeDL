@@ -15,6 +15,12 @@ class DownloadQueue:
         self._lock = threading.Lock()
         self._in_flight: list[VideoTask] = []
         self.on_task_update: Optional[Callable[[VideoTask], None]] = None
+        self.on_log: Optional[Callable[[str], None]] = None
+        # Throttling to dodge IP rate-limiting / bot detection.
+        self.sleep_interval: int = 0      # (kept for parity; per-task in download.py)
+        self.batch_size: int = 0          # pause after this many finished downloads
+        self.batch_pause: int = 0         # seconds to pause between batches
+        self._batch_counter: int = 0
 
     @property
     def max_workers(self) -> int:
@@ -47,6 +53,7 @@ class DownloadQueue:
                 if t.status == DownloadStatus.PAUSED and not t.cancelled:
                     t.status = DownloadStatus.QUEUED
                     t.pause_requested = False
+            self._batch_counter = 0
             self._running = True
 
         if self._executor is None or getattr(self._executor, "_shutdown", False):
@@ -99,7 +106,20 @@ class DownloadQueue:
                 continue
 
             self._in_flight.append(task)
+            # Big pause between batches of dispatched downloads.
+            if self.batch_size > 0 and self.batch_pause > 0 and \
+                    self._batch_counter >= self.batch_size:
+                self._batch_counter = 0
+                if self.on_log:
+                    self.on_log(
+                        f"Batch limit reached — pausing {self.batch_pause}s "
+                        f"to avoid IP rate-limiting…")
+                for _ in range(self.batch_pause):
+                    if not self._running:
+                        break
+                    time.sleep(1)
             self._executor.submit(self._run_task, task, skip_downloaded)
+            self._batch_counter += 1
 
         with self._lock:
             self._running = False
