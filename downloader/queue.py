@@ -4,6 +4,7 @@ from typing import Callable, Optional
 from concurrent.futures import ThreadPoolExecutor
 from models.task import VideoTask, DownloadStatus
 from downloader.download import download_task, _PauseRequested
+from downloader.errors import is_bot_check
 
 
 class DownloadQueue:
@@ -21,6 +22,10 @@ class DownloadQueue:
         self.batch_size: int = 0          # pause after this many finished downloads
         self.batch_pause: int = 0         # seconds to pause between batches
         self._batch_counter: int = 0
+        # Cookie pool: cookies.txt files rotated round-robin per task, with
+        # automatic failover to the next file when YouTube flags the account.
+        self.cookie_pool: list[str] = []
+        self._pool_idx: int = 0
 
     @property
     def max_workers(self) -> int:
@@ -87,6 +92,13 @@ class DownloadQueue:
         with self._lock:
             self._pending.clear()
 
+    def _next_cookie(self) -> Optional[str]:
+        if not self.cookie_pool:
+            return None
+        path = self.cookie_pool[self._pool_idx % len(self.cookie_pool)]
+        self._pool_idx += 1
+        return path
+
     def _dispatch(self, skip_downloaded: bool) -> None:
         while True:
             with self._lock:
@@ -104,6 +116,12 @@ class DownloadQueue:
                     break
                 time.sleep(0.2)
                 continue
+
+            # Auto-assign the next cookies.txt from the pool unless the user
+            # explicitly forced a browser or a specific file for this task.
+            if self.cookie_pool and not task.cookies_from_browser \
+                    and not task.cookiefile:
+                task.cookiefile = self._next_cookie()
 
             self._in_flight.append(task)
             # Big pause between batches of dispatched downloads.
@@ -127,7 +145,8 @@ class DownloadQueue:
     def _run_task(self, task: VideoTask, skip_downloaded: bool) -> None:
         if task.cancelled:
             with self._lock:
-                self._in_flight.discard(task)
+                if task in self._in_flight:
+                    self._in_flight.remove(task)
             return
 
         def hook(d: dict) -> None:
@@ -146,6 +165,34 @@ class DownloadQueue:
                 if task.status == DownloadStatus.PAUSED and \
                         not any(t is task for t in self._pending):
                     self._pending.append(task)
+
+        # Automatic cookie failover: when YouTube flags the account that this
+        # task's cookies.txt belongs to, silently retry with the next file in
+        # the pool (each file is tried at most once per task).
+        if task.status == DownloadStatus.FAILED and \
+                task.cookiefile in self.cookie_pool and \
+                is_bot_check(task.error_message or "") and \
+                task.cookie_attempts + 1 < len(self.cookie_pool):
+            nxt = self._next_cookie()
+            if nxt:
+                task.cookie_attempts += 1
+                task.cookiefile = nxt
+                task.status = DownloadStatus.QUEUED
+                task.progress = 0.0
+                task.error_message = None
+                task.error_suggestion = ""
+                task.pause_requested = False
+                task.speed_str = ""
+                task.eta_str = ""
+                task.current_filename = ""
+                if self.on_log:
+                    self.on_log(
+                        f"↻ Bot check on current cookies — retrying "
+                        f"'{task.title[:50]}' with the next cookies file "
+                        f"(attempt {task.cookie_attempts + 1}/{len(self.cookie_pool)})…")
+                with self._lock:
+                    if self._running and not any(t is task for t in self._pending):
+                        self._pending.append(task)
 
         if self.on_task_update:
             self.on_task_update(task)

@@ -76,3 +76,9 @@ def classify_error(raw: str) -> ErrorInfo:
         if re.search(pat, text):
             return ErrorInfo(title, suggestion)
     return ErrorInfo("Download failed", (raw or "unknown error").strip()[:200])
+
+
+def is_bot_check(raw: str) -> bool:
+    """True when the failure looks like YouTube flagging the current cookies/IP."""
+    info = classify_error(raw)
+    return info.title.startswith("Bot check")
