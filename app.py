@@ -646,21 +646,15 @@ class App(ctk.CTk):
 
                 if cookies_from_browser and self._browser_running(cookies_from_browser):
                     self._log_append(
-                        f"WARNING: {cookies_from_browser} is running — cookie extraction "
-                        f"may fail ('Could not copy cookie database'). Close it and retry, "
-                        f"or use a cookies.txt file.")
-                messagebox.showwarning(
-                    "Browser Still Running",
-                    f"{cookies_from_browser.title()} is currently open.\n\n"
-                    "The app can force-unlock the cookie database automatically (it closes the "
-                    "process locking it), so you can usually just proceed. If extraction still "
-                    "fails, fully close the browser (including background processes in Task Manager) "
-                    "and click Add again — or use a cookies.txt file exported with the "
-                    "'Get cookies.txt LOCALLY' extension instead.")
+                        f"NOTE: {cookies_from_browser} is still running (possibly background "
+                        f"processes). The app will force-unlock its cookie database automatically; "
+                        f"you can proceed. To stop the warnings, fully end all {cookies_from_browser} "
+                        f"processes in Task Manager (or run: taskkill /IM {cookies_from_browser}.exe /F), "
+                        f"or disable 'Continue running background apps' in the browser settings.")
 
                 if cookies_from_browser and self._is_elevated():
                     self._log_append(
-                        "WARNING: app is running as Administrator — Chrome/Edge cookie "
+                        "WARNING: app is running as Administrator - Chrome/Edge cookie "
                         "decryption (DPAPI) will likely fail. Run as your normal user, "
                         "or use a cookies.txt file.")
                     messagebox.showwarning(
@@ -672,18 +666,18 @@ class App(ctk.CTk):
                         "Fix: launch the app as your normal (non-Admin) user, or export a cookies.txt "
                         "with the 'Get cookies.txt LOCALLY' extension and use that instead.")
 
-                    tasks = build_tasks(
-                        url=url,
-                        output_format=output_format,
-                        video_quality=video_quality,
-                        audio_quality=audio_quality,
-                        output_dir=self._dir_var.get(),
-                        skip_downloaded=self._skip_var.get(),
-                        log_callback=_log,
-                        cookies_from_browser=cookies_from_browser,
-                        cookiefile=cookiefile,
-                    )
-                    self.after(0, lambda: self._enqueue_tasks(tasks, delay))
+                tasks = build_tasks(
+                    url=url,
+                    output_format=output_format,
+                    video_quality=video_quality,
+                    audio_quality=audio_quality,
+                    output_dir=self._dir_var.get(),
+                    skip_downloaded=self._skip_var.get(),
+                    log_callback=_log,
+                    cookies_from_browser=cookies_from_browser,
+                    cookiefile=cookiefile,
+                )
+                self.after(0, lambda: self._enqueue_tasks(tasks, delay))
             except Exception as exc:
                 msg = _strip_ansi(str(exc))
                 self.after(0, lambda m=msg: self._set_status(f"Error: {m}"))
