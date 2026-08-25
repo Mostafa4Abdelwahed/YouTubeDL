@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import subprocess
+import ctypes
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -592,6 +593,14 @@ class App(ctk.CTk):
         except Exception:
             return False
 
+    def _is_elevated(self) -> bool:
+        if sys.platform != "win32":
+            return False
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
     def _valid_cookiefile(self) -> str:
         path = self._cookiefile_var.get().strip()
         if not path:
@@ -648,18 +657,32 @@ class App(ctk.CTk):
                         "processes in Task Manager) and click Add again — or use a cookies.txt file "
                         "exported with the 'Get cookies.txt LOCALLY' extension instead.")
 
-                tasks = build_tasks(
-                    url=url,
-                    output_format=output_format,
-                    video_quality=video_quality,
-                    audio_quality=audio_quality,
-                    output_dir=self._dir_var.get(),
-                    skip_downloaded=self._skip_var.get(),
-                    log_callback=_log,
-                    cookies_from_browser=cookies_from_browser,
-                    cookiefile=cookiefile,
-                )
-                self.after(0, lambda: self._enqueue_tasks(tasks, delay))
+                if cookies_from_browser and self._is_elevated():
+                    self._log_append(
+                        "WARNING: app is running as Administrator — Chrome/Edge cookie "
+                        "decryption (DPAPI) will likely fail. Run as your normal user, "
+                        "or use a cookies.txt file.")
+                    messagebox.showwarning(
+                        "Running as Administrator",
+                        "You are running this app with Administrator privileges.\n\n"
+                        "Chrome/Edge cookies are encrypted with DPAPI and can only be decrypted by "
+                        "the same Windows user that opened the browser. If the browser isn't also "
+                        "elevated, cookie decryption fails with 'Failed to decrypt with DPAPI'.\n\n"
+                        "Fix: launch the app as your normal (non-Admin) user, or export a cookies.txt "
+                        "with the 'Get cookies.txt LOCALLY' extension and use that instead.")
+
+                    tasks = build_tasks(
+                        url=url,
+                        output_format=output_format,
+                        video_quality=video_quality,
+                        audio_quality=audio_quality,
+                        output_dir=self._dir_var.get(),
+                        skip_downloaded=self._skip_var.get(),
+                        log_callback=_log,
+                        cookies_from_browser=cookies_from_browser,
+                        cookiefile=cookiefile,
+                    )
+                    self.after(0, lambda: self._enqueue_tasks(tasks, delay))
             except Exception as exc:
                 msg = _strip_ansi(str(exc))
                 self.after(0, lambda m=msg: self._set_status(f"Error: {m}"))

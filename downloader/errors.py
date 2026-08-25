@@ -29,6 +29,12 @@ _RULES = [
      "Close the browser completely (all windows AND background processes) and retry, "
      "or export a cookies.txt with the 'Get cookies.txt LOCALLY' extension and use that instead."),
 
+    ("dpapi|failed to decrypt|decrypt with",
+     "Cookie decryption failed (DPAPI)",
+     "Run this app as the SAME Windows user that opened the browser (do NOT run as "
+     "Administrator if the browser isn't). Also try `pip install pycryptodome`. "
+     "The reliable fix is to export a cookies.txt with 'Get cookies.txt LOCALLY' and use that."),
+
     ("age.?restricted|confirm you.?re not a bot|sign in to confirm|"
      "inappropriate for some users|verify you.?re a human|unusual traffic|"
      "this helps protect our community|too many requests|http error 429|"
