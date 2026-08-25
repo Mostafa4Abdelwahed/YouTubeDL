@@ -127,7 +127,8 @@ class DownloadQueue:
     def _run_task(self, task: VideoTask, skip_downloaded: bool) -> None:
         if task.cancelled:
             with self._lock:
-                self._in_flight.discard(task)
+                if task in self._in_flight:
+                    self._in_flight.remove(task)
             return
 
         def hook(d: dict) -> None:
