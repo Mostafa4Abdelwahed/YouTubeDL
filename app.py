@@ -413,6 +413,24 @@ class App(tk.Tk):
                  fg=TEXT_PRI, insertbackground=TEXT_PRI,
                  font=FONT_LBL, relief="flat", bd=6).pack(fill="x")
 
+        # Range selection (1-based, From – To; To=0 means through the end)
+        rng = tk.Frame(src, bg=PANEL_BG)
+        rng.pack(fill="x", pady=(4, 0))
+        tk.Label(rng, text="From #", fg=TEXT_MUT, bg=PANEL_BG,
+                 font=FONT_SM).pack(side="left")
+        self._range_start_var = tk.IntVar(value=1)
+        tk.Spinbox(rng, from_=1, to=100000, textvariable=self._range_start_var,
+                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=6,
+                   relief="flat", bd=2, highlightthickness=0).pack(side="left", padx=(4, 8))
+        tk.Label(rng, text="To #", fg=TEXT_MUT, bg=PANEL_BG,
+                 font=FONT_SM).pack(side="left")
+        self._range_end_var = tk.IntVar(value=0)
+        tk.Spinbox(rng, from_=0, to=100000, textvariable=self._range_end_var,
+                   bg=PANEL_BG, fg=TEXT_PRI, font=FONT_SM, width=6,
+                   relief="flat", bd=2, highlightthickness=0).pack(side="left", padx=(4, 0))
+        tk.Label(rng, text="(0 = end)", fg=TEXT_MUT, bg=PANEL_BG,
+                 font=("Segoe UI", 7)).pack(side="left", padx=(6, 0))
+
         # ── Options card ──
         opt = card(parent, "Options")
         lbl(opt, "Output Format")
@@ -743,6 +761,20 @@ class App(tk.Tk):
             messagebox.showwarning("No Items",
                                    "No downloadable videos were found at that URL.")
             return
+
+        # Apply a from–to range (1-based). Only meaningful for playlists, but
+        # harmless for a single video (start=1 / end=0 keeps everything).
+        if len(tasks) > 1:
+            start = max(1, self._range_start_var.get())
+            end = self._range_end_var.get()
+            if end <= 0 or end > len(tasks):
+                end = len(tasks)
+            if start > 1 or end < len(tasks):
+                total = len(tasks)
+                tasks = tasks[start - 1:end]
+                self._log_append(
+                    f"Range applied: videos {start}–{end} of {total} "
+                    f"({len(tasks)} item(s)).")
 
         added = []
         for task in tasks:
