@@ -74,7 +74,6 @@ class VideoTask:
     final_filename: str = ""
     inter_download_delay: int = 0
     error_suggestion: str = ""
-    cookie_attempts: int = 0
 
     @property
     def is_audio_only(self) -> bool:

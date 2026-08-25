@@ -218,7 +218,6 @@ class App(ctk.CTk):
 
         self.after(500, self._validate_cookie_state)
         self.after(600, self._init_runtime)
-        self.after(700, self._refresh_cookie_pool)
         self._sync_buttons()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -457,10 +456,7 @@ class App(ctk.CTk):
         ctk.CTkButton(cfile_row, text="✕", command=lambda: self._cookiefile_var.set(""),
                       width=30, height=28, fg_color="#333333", hover_color=ACCENT,
                       text_color=TEXT, font=FONT_SM).pack(side="left", padx=(4, 0))
-        ctk.CTkLabel(ck, text="Netscape format. Use 'Get cookies.txt LOCALLY'.\n"
-                             "Auto mode: drop several cookies.txt files in the app's "
-                             "'cookies/' folder — they rotate per video and switch "
-                             "automatically when YouTube flags one (bot check).",
+        ctk.CTkLabel(ck, text="Netscape format. Use 'Get cookies.txt LOCALLY'.",
                      text_color=MUT, font=("Segoe UI", 7),
                      wraplength=290, justify="left").pack(anchor="w", padx=12, pady=(4, 0))
 
@@ -581,30 +577,6 @@ class App(ctk.CTk):
         except Exception:
             self._cookiefile_var.set("")
 
-    def _refresh_cookie_pool(self) -> None:
-        """Load valid cookies.txt files from the app's cookies/ folder into the
-        rotation pool. The queue assigns one per download and automatically
-        switches to the next when YouTube flags the current one."""
-        pool_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies")
-        files = []
-        if os.path.isdir(pool_dir):
-            for name in sorted(os.listdir(pool_dir)):
-                if not name.lower().endswith(".txt"):
-                    continue
-                path = os.path.join(pool_dir, name)
-                try:
-                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                        first = f.readline().strip()
-                    if "Netscape" in first or "HTTP Cookie" in first:
-                        files.append(path)
-                except Exception:
-                    pass
-        self._queue.cookie_pool = files
-        if files:
-            self._log_append(
-                f"Cookie pool: {len(files)} file(s) loaded from cookies/ — "
-                f"auto-rotation + failover ON.")
-
     # ── Browsers ──────────────────────────────────────────────────────────────
 
     def _browse_dir(self) -> None:
@@ -689,7 +661,6 @@ class App(ctk.CTk):
             self._aq_var.get(), list(AUDIO_QUALITY_LABELS.values())[0])
         delay = self._int_val(self._delay_var, 0)
 
-        self._refresh_cookie_pool()
         self._set_status("Fetching YouTube URL info — please wait…")
         self._log_append(f"Fetching: {url}")
         self._add_btn.configure(state="disabled")
