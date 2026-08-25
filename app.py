@@ -430,7 +430,7 @@ class App(ctk.CTk):
 
         # ── Cookies ──
         ck = self._card(parent, "Cookies (fixes bot detection)")
-        self._cookies_var = tk.StringVar(value="None")
+        self._cookies_var = tk.StringVar(value="firefox")
         ctk.CTkComboBox(ck, values=["None", "chrome", "firefox", "edge",
                                     "brave", "opera", "chromium"],
                         variable=self._cookies_var, state="readonly",
