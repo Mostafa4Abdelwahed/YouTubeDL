@@ -434,7 +434,7 @@ class App(ctk.CTk):
         thr = self._card(parent, "Throttling (avoid IP ban)")
         ctk.CTkLabel(thr, text="Delay between downloads (sec)", text_color=MUT,
                      font=FONT_SM).pack(anchor="w", padx=12)
-        self._delay_var = tk.StringVar(value="0")
+        self._delay_var = tk.StringVar(value="5")
         ctk.CTkEntry(thr, textvariable=self._delay_var, width=60, height=26,
                      fg_color=ENTRY, text_color=TEXT, border_color=BORDER,
                      font=FONT_SM).pack(anchor="w", padx=12, pady=(2, 0))
