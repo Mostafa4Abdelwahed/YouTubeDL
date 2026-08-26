@@ -215,12 +215,39 @@ class App(ctk.CTk):
         self._last_running: bool | None = None
 
         self._build_ui()
+        self._fix_mousewheel_scroll()
 
         self.after(500, self._validate_cookie_state)
         self.after(600, self._init_runtime)
         self._sync_buttons()
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _fix_mousewheel_scroll(self) -> None:
+        """Make the mouse wheel scroll the scrollable area under the pointer.
+        customtkinter's built-in global <MouseWheel> handler only fires when
+        the widget directly under the cursor is recognised, and rows inside
+        CTkScrollableFrame contain nested canvases whose master chain never
+        reaches the scrollable frame — so the wheel appears dead and only the
+        scrollbar works. We drop their handler and route the event ourselves
+        by hit-testing each scrollable frame's actual canvas rectangle."""
+        self.unbind_all("<MouseWheel>")
+
+        frames = [self._left_panel, self._scroll]
+
+        def _on_wheel(event):
+            px, py = event.x_root, event.y_root
+            for fr in frames:
+                cv = fr._parent_canvas
+                x1 = cv.winfo_rootx()
+                y1 = cv.winfo_rooty()
+                x2 = x1 + cv.winfo_width()
+                y2 = y1 + cv.winfo_height()
+                if x1 <= px <= x2 and y1 <= py <= y2:
+                    cv.yview_scroll(int(-event.delta / 6), "units")
+                    return
+
+        self.bind_all("<MouseWheel>", _on_wheel, add="+")
 
     def _on_close(self) -> None:
         try:
@@ -315,12 +342,12 @@ class App(ctk.CTk):
         body = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
         body.pack(fill="both", expand=True, padx=14, pady=10)
 
-        left = ctk.CTkScrollableFrame(body, width=330, fg_color=PANEL,
+        self._left_panel = ctk.CTkScrollableFrame(body, width=330, fg_color=PANEL,
                                       corner_radius=10,
                                       scrollbar_button_color=BORDER,
                                       scrollbar_button_hover_color=ACCENT)
-        left.pack(side="left", fill="y", padx=(0, 12))
-        self._build_controls(left)
+        self._left_panel.pack(side="left", fill="y", padx=(0, 12))
+        self._build_controls(self._left_panel)
 
         right = ctk.CTkFrame(body, fg_color=PANEL, corner_radius=10)
         right.pack(side="left", fill="both", expand=True)
