@@ -27,6 +27,7 @@ from downloader import runtime
 from storage import db
 
 QUEUE_CHUNK_SIZE = 50  # rows created per idle batch — keeps UI responsive at 1000 items
+PAGE_SIZE = 100        # pagination: rows per page
 
 
 ctk.set_appearance_mode("dark")
@@ -208,19 +209,24 @@ class App(ctk.CTk):
         self._queue = DownloadQueue(max_workers=1)
         self._queue.on_task_update = self._on_task_update
         self._queue.on_log = self._log_append
-        self._rows: dict[str, QueueRow] = {}
+        self._rows: dict[str, QueueRow] = {}   # only visible page rows
         self._tasks: list = []
+        self._task_ids: set[str] = set()         # fast duplicate check across pages
         # Coalesced refresh: progress events just mark rows dirty; a single
         # scheduled flush redraws them. Prevents event-loop flooding.
         self._pending_refresh: dict[str, object] = {}
         self._refresh_job: str | None = None
         self._last_running: bool | None = None
-        # Auto-scroll: follow active downloads in large queues (1000 items)
+        # Pagination + Auto-page
+        self._page_size: int = PAGE_SIZE
+        self._current_page: int = 0
+        # Auto-scroll / auto-paginate: follow active downloads in large queues (1000 items)
         self._auto_scroll_enabled: bool = True
         self._auto_scroll_job: str | None = None
 
         self._build_ui()
         self._fix_mousewheel_scroll()
+        self._update_pagination_ui()
 
         self.after(500, self._validate_cookie_state)
         self.after(600, self._init_runtime)
@@ -551,6 +557,22 @@ class App(ctk.CTk):
                                              scrollbar_button_hover_color=ACCENT)
         self._scroll.pack(fill="both", expand=True, padx=6, pady=(4, 0))
 
+        # ── Pagination bar (PAGE_SIZE = 100) ────────────────────────────────
+        self._pag_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        self._pag_frame.pack(fill="x", padx=10, pady=(6, 0))
+        self._prev_btn = ctk.CTkButton(
+            self._pag_frame, text="‹ Prev", width=64, height=26,
+            command=self._prev_page, fg_color=BORDER, hover_color="#3a3a3a",
+            text_color=TEXT, font=FONT_SM)
+        self._prev_btn.pack(side="left")
+        self._page_lbl = ctk.CTkLabel(self._pag_frame, text="Page 1/1", text_color=MUT, font=FONT_SM)
+        self._page_lbl.pack(side="left", expand=True)
+        self._next_btn = ctk.CTkButton(
+            self._pag_frame, text="Next ›", width=64, height=26,
+            command=self._next_page, fg_color=BORDER, hover_color="#3a3a3a",
+            text_color=TEXT, font=FONT_SM)
+        self._next_btn.pack(side="right")
+
         log_hdr = ctk.CTkFrame(parent, fg_color="transparent")
         log_hdr.pack(fill="x", padx=14, pady=(4, 2))
         ctk.CTkLabel(log_hdr, text="Log", text_color=MUT,
@@ -571,6 +593,82 @@ class App(ctk.CTk):
         self._status_var = tk.StringVar(value="Ready")
         ctk.CTkLabel(parent, textvariable=self._status_var, text_color=MUT,
                      font=FONT_SM, anchor="w").pack(fill="x", padx=14, pady=(0, 8))
+
+    # ── Pagination helpers ────────────────────────────────────────────────────
+    @property
+    def _total_pages(self) -> int:
+        if not self._tasks:
+            return 1
+        return (len(self._tasks) + self._page_size - 1) // self._page_size
+
+    def _update_pagination_ui(self) -> None:
+        total = self._total_pages
+        cur = min(self._current_page, total - 1)
+        self._current_page = max(0, cur)
+        n = len(self._tasks)
+        start = self._current_page * self._page_size + 1 if n else 0
+        end = min((self._current_page + 1) * self._page_size, n)
+        # label like: Page 2/5  (101-200 of 487)
+        if n == 0:
+            txt = "Page 1/1  (0 items)"
+        else:
+            txt = f"Page {self._current_page + 1}/{total}  ({start}-{end} of {n})"
+        try:
+            self._page_lbl.configure(text=txt)
+            self._prev_btn.configure(state="normal" if self._current_page > 0 else "disabled")
+            self._next_btn.configure(state="normal" if self._current_page < total - 1 else "disabled")
+            # hide bar when only one page (optional keep visible but disabled)
+            # self._pag_frame.pack_forget() if total <=1 else self._pag_frame.pack(...)
+        except Exception:
+            pass
+
+    def _render_current_page(self) -> None:
+        # Destroy only visible rows; _rows holds only current page
+        for w in self._scroll.winfo_children():
+            w.destroy()
+        self._rows.clear()
+        if not self._tasks:
+            self._update_pagination_ui()
+            return
+        # Clamp page
+        if self._current_page >= self._total_pages:
+            self._current_page = self._total_pages - 1
+        if self._current_page < 0:
+            self._current_page = 0
+        start = self._current_page * self._page_size
+        end = min(start + self._page_size, len(self._tasks))
+        for task in self._tasks[start:end]:
+            row = QueueRow(self._scroll, task, callbacks={
+                "on_pause": self._pause_task,
+                "on_resume": self._resume_task,
+                "on_retry": self._retry_task,
+                "on_delete": self._delete_task,
+            })
+            row.pack(fill="x", padx=4, pady=4)
+            row.refresh()
+            self._rows[task.video_id] = row
+        self._update_pagination_ui()
+        self._update_count_label()
+        # reset scroll to top of page
+        try:
+            self._scroll._parent_canvas.yview_moveto(0)
+            self.update_idletasks()
+        except Exception:
+            pass
+
+    def _go_to_page(self, idx: int) -> None:
+        if idx < 0 or idx >= self._total_pages:
+            return
+        self._current_page = idx
+        self._render_current_page()
+
+    def _next_page(self) -> None:
+        if self._current_page + 1 < self._total_pages:
+            self._go_to_page(self._current_page + 1)
+
+    def _prev_page(self) -> None:
+        if self._current_page > 0:
+            self._go_to_page(self._current_page - 1)
 
     # ── Format toggle ────────────────────────────────────────────────────────
 
@@ -788,10 +886,11 @@ class App(ctk.CTk):
             return
 
         # Filter duplicates first so capacity accounting is accurate.
+        # Use _task_ids (covers all pages), not just visible _rows.
         unique = []
         dup_count = 0
         for t in tasks:
-            if t.video_id in self._rows:
+            if t.video_id in self._task_ids:
                 dup_count += 1
             else:
                 unique.append(t)
@@ -801,6 +900,7 @@ class App(ctk.CTk):
         if not unique:
             self._set_status("All videos were already in the queue.")
             self._update_count_label()
+            self._update_pagination_ui()
             return
 
         truncated = 0
@@ -816,8 +916,7 @@ class App(ctk.CTk):
                 f"{truncated} video(s) were not added.\n"
                 "Tip: use 'From # / To #' range or 'Clear Done' to make space.")
 
-        # Large playlists can freeze the UI if all 1000 rows are created at once.
-        # Create rows in small chunks via after() so the event loop stays responsive.
+        # Pagination-friendly: add to backing list in chunks, render only visible page.
         # total_target is dynamic (starting + to_add), not static 1000.
         target_total = len(self._tasks) + len(unique)
         if len(unique) > QUEUE_CHUNK_SIZE:
@@ -828,7 +927,7 @@ class App(ctk.CTk):
             self._finish_enqueue(added, truncated, dup_count)
 
     def _add_tasks_sync(self, tasks: list, delay: int) -> list:
-        """Synchronously add a small batch and create rows. Returns added list."""
+        """Synchronously add a small batch to backing list + queue; render paginated view."""
         added = []
         for task in tasks:
             task.inter_download_delay = delay
@@ -837,17 +936,10 @@ class App(ctk.CTk):
                 self._log_append(f"Queue full — could not add: {task.title}")
                 break
             self._tasks.append(task)
-            row = QueueRow(self._scroll, task, callbacks={
-                "on_pause": self._pause_task,
-                "on_resume": self._resume_task,
-                "on_retry": self._retry_task,
-                "on_delete": self._delete_task,
-            })
-            row.pack(fill="x", padx=4, pady=4)
-            row.refresh()
-            self._rows[task.video_id] = row
+            self._task_ids.add(task.video_id)
             added.append(task)
-        self._update_count_label()
+        # Re-render only the current page (100 rows max) — no 1000-row freeze
+        self._render_current_page()
         self._update_overall()
         return added
 
@@ -861,25 +953,21 @@ class App(ctk.CTk):
                 self._log_append(f"Queue full — stopped at {len(self._tasks)}/{MAX_QUEUE_SIZE}.")
                 break
             self._tasks.append(task)
-            row = QueueRow(self._scroll, task, callbacks={
-                "on_pause": self._pause_task,
-                "on_resume": self._resume_task,
-                "on_retry": self._retry_task,
-                "on_delete": self._delete_task,
-            })
-            row.pack(fill="x", padx=4, pady=4)
-            row.refresh()
-            self._rows[task.video_id] = row
+            self._task_ids.add(task.video_id)
 
         # Dynamic: loaded / totalItems (progressive), not loaded/1000
         self._update_count_label(total=target_total)
         self._update_overall()
+        # Keep pagination label live during chunked add
+        self._update_pagination_ui()
 
         nxt = offset + QUEUE_CHUNK_SIZE
         if nxt < len(tasks):
             # Schedule next chunk without blocking UI (progress bar stays alive)
             self.after(15, lambda: self._enqueue_chunked(tasks, delay, nxt, truncated, dup_count, target_total))
         else:
+            # Final chunk — render visible page once
+            self._render_current_page()
             added_count = len(tasks)
             self._finish_enqueue(tasks[:added_count], truncated, dup_count)
 
@@ -946,6 +1034,7 @@ class App(ctk.CTk):
         if requeued == 0:
             messagebox.showwarning("Queue Full", f"Queue is at limit ({MAX_QUEUE_SIZE}). Clear space before retrying.")
             return
+        self._render_current_page()
         self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
         self._log_append(f"Retrying {requeued}/{len(failed)} failed item(s)…")
@@ -955,11 +1044,14 @@ class App(ctk.CTk):
         self._queue.stop()
         self._queue.clear()
         self._tasks.clear()
+        self._task_ids.clear()
         self._rows.clear()
         self._pending_refresh.clear()
         for w in self._scroll.winfo_children():
             w.destroy()
+        self._current_page = 0
         self._update_count_label()
+        self._update_pagination_ui()
         self._overall_bar.set(0)
         self._overall_lbl.configure(text="")
         self._log_append("Queue cleared.")
@@ -971,15 +1063,18 @@ class App(ctk.CTk):
         still_active = []
         for task in self._tasks:
             if task.status in finished:
-                row = self._rows.pop(task.video_id, None)
-                if row:
-                    row.destroy()
+                self._task_ids.discard(task.video_id)
+                self._pending_refresh.pop(task.video_id, None)
             else:
                 still_active.append(task)
+        removed = len(self._tasks) - len(still_active)
         self._tasks = still_active
-        self._update_count_label()
+        # Adjust page if current beyond end
+        if self._current_page >= self._total_pages:
+            self._current_page = max(0, self._total_pages - 1)
+        self._render_current_page()
         self._update_overall()
-        self._set_status(f"Cleared finished items. {len(self._tasks)} remaining.")
+        self._set_status(f"Cleared {removed} finished item(s). {len(self._tasks)} remaining.")
 
     # ── Per-item controls ─────────────────────────────────────────────────────
 
@@ -999,6 +1094,15 @@ class App(ctk.CTk):
             messagebox.showwarning("Queue Full", f"Queue is at limit ({MAX_QUEUE_SIZE}). Clear space before resuming.")
             self._log_append(f"Queue full — could not resume: {task.title}")
             return
+        # Jump to task's page if off-screen (pagination)
+        try:
+            idx = next(i for i, t in enumerate(self._tasks) if t is task)
+            pg = idx // self._page_size
+            if pg != self._current_page:
+                self._go_to_page(pg)
+        except Exception:
+            pass
+        self._render_current_page()
         self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
 
@@ -1008,6 +1112,14 @@ class App(ctk.CTk):
             messagebox.showwarning("Queue Full", f"Queue is at limit ({MAX_QUEUE_SIZE}). Clear space before retrying.")
             self._log_append(f"Queue full — could not retry: {task.title}")
             return
+        try:
+            idx = next(i for i, t in enumerate(self._tasks) if t is task)
+            pg = idx // self._page_size
+            if pg != self._current_page:
+                self._go_to_page(pg)
+        except Exception:
+            pass
+        self._render_current_page()
         self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
 
@@ -1025,11 +1137,12 @@ class App(ctk.CTk):
     def _delete_task(self, task) -> None:
         task.cancelled = True
         self._pending_refresh.pop(task.video_id, None)
-        row = self._rows.pop(task.video_id, None)
-        if row:
-            row.destroy()
+        self._task_ids.discard(task.video_id)
         self._tasks = [t for t in self._tasks if t.video_id != task.video_id]
-        self._update_count_label()
+        # Re-render paginated view to fill gap (next page items shift in)
+        if self._current_page >= self._total_pages:
+            self._current_page = max(0, self._total_pages - 1)
+        self._render_current_page()
         self._update_overall()
         self._set_status(f"Removed: {task.title[:50]}")
 
@@ -1134,7 +1247,18 @@ class App(ctk.CTk):
         if not self._queue.is_running:
             return
         try:
-            # Prefer the currently DOWNLOADING item, otherwise next QUEUED
+            # ── 1) Auto-paginate: if current page is all terminal, go next ──
+            start = self._current_page * self._page_size
+            end = min(start + self._page_size, len(self._tasks))
+            page_tasks = self._tasks[start:end]
+            if page_tasks:
+                terminal = {DownloadStatus.COMPLETED, DownloadStatus.FAILED, DownloadStatus.SKIPPED}
+                if all(t.status in terminal for t in page_tasks):
+                    if self._current_page + 1 < self._total_pages:
+                        self._go_to_page(self._current_page + 1)
+                        self._log_append(f"Page {self._current_page} done — auto-switched to Page {self._current_page+1}")
+                        return
+            # ── 2) If active item is on another page, jump to that page ──
             active_idx: int | None = None
             for idx, t in enumerate(self._tasks):
                 if t.status == DownloadStatus.DOWNLOADING:
@@ -1147,20 +1271,23 @@ class App(ctk.CTk):
                         break
             if active_idx is None:
                 return
+            active_page = active_idx // self._page_size
+            if active_page != self._current_page:
+                self._go_to_page(active_page)
+                return
+            # ── 3) Within-page smooth scroll to active row ──
             canvas = self._scroll._parent_canvas  # CTkScrollableFrame internals
-            total = len(self._tasks)
-            # Skip if active already comfortably inside viewport (avoid jitter)
+            # relative index inside current page
+            rel_idx = active_idx - start
+            page_len = end - start
             try:
                 first, last = canvas.yview()
-                frac = active_idx / max(1, total)
-                # 8% hysteresis — only scroll if active is off-screen or near edge
+                frac = rel_idx / max(1, page_len)
                 if first + 0.06 <= frac <= last - 0.06:
                     return
             except Exception:
                 pass
-            # Place active ~12% from top so a couple of preceding rows stay visible
-            target = max(0.0, min(1.0, (active_idx - 1) / max(1, total)))
-            # Ensure geometry is up to date before scrolling
+            target = max(0.0, min(1.0, (rel_idx - 1) / max(1, page_len)))
             try:
                 self.update_idletasks()
             except Exception:
