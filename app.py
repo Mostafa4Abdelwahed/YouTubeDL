@@ -520,7 +520,7 @@ class App(ctk.CTk):
         hdr.pack(fill="x", padx=14, pady=(12, 4))
         ctk.CTkLabel(hdr, text="Download Queue", text_color=TEXT,
                      font=("Segoe UI", 14, "bold")).pack(side="left")
-        self._count_lbl = ctk.CTkLabel(hdr, text=f"0/{MAX_QUEUE_SIZE} items", text_color=MUT,
+        self._count_lbl = ctk.CTkLabel(hdr, text="0 items", text_color=MUT,
                                        font=FONT_SM)
         self._count_lbl.pack(side="right")
 
@@ -807,9 +807,11 @@ class App(ctk.CTk):
 
         # Large playlists can freeze the UI if all 1000 rows are created at once.
         # Create rows in small chunks via after() so the event loop stays responsive.
+        # total_target is dynamic (starting + to_add), not static 1000.
+        target_total = len(self._tasks) + len(unique)
         if len(unique) > QUEUE_CHUNK_SIZE:
             self._set_status(f"Adding {len(unique)} item(s) to queue…")
-            self._enqueue_chunked(unique, delay, 0, truncated, dup_count)
+            self._enqueue_chunked(unique, delay, 0, truncated, dup_count, target_total)
         else:
             added = self._add_tasks_sync(unique, delay)
             self._finish_enqueue(added, truncated, dup_count)
@@ -839,7 +841,7 @@ class App(ctk.CTk):
         return added
 
     def _enqueue_chunked(self, tasks: list, delay: int, offset: int,
-                         truncated: int, dup_count: int) -> None:
+                         truncated: int, dup_count: int, target_total: int) -> None:
         chunk = tasks[offset: offset + QUEUE_CHUNK_SIZE]
         for task in chunk:
             task.inter_download_delay = delay
@@ -858,13 +860,14 @@ class App(ctk.CTk):
             row.refresh()
             self._rows[task.video_id] = row
 
-        self._update_count_label()
+        # Dynamic: loaded / totalItems (progressive), not loaded/1000
+        self._update_count_label(total=target_total)
         self._update_overall()
 
         nxt = offset + QUEUE_CHUNK_SIZE
         if nxt < len(tasks):
             # Schedule next chunk without blocking UI (progress bar stays alive)
-            self.after(15, lambda: self._enqueue_chunked(tasks, delay, nxt, truncated, dup_count))
+            self.after(15, lambda: self._enqueue_chunked(tasks, delay, nxt, truncated, dup_count, target_total))
         else:
             added_count = len(tasks)
             self._finish_enqueue(tasks[:added_count], truncated, dup_count)
@@ -879,10 +882,15 @@ class App(ctk.CTk):
         self._update_count_label()
         self._update_overall()
 
-    def _update_count_label(self) -> None:
+    def _update_count_label(self, total: int | None = None) -> None:
         n = len(self._tasks)
-        self._count_lbl.configure(text=f"{n}/{MAX_QUEUE_SIZE} items")
-        # Warn visually as we approach the limit
+        # Dynamic denominator: loaded / total in queue, NOT static 1000.
+        # While chunk-adding, show progress e.g. 120/500; otherwise just "N items".
+        if total is not None and total != n and total > 0:
+            self._count_lbl.configure(text=f"{n}/{total} items")
+        else:
+            self._count_lbl.configure(text=f"{n} items")
+        # Warn visually as we approach the hard cap (still enforced in queue.py)
         if n >= MAX_QUEUE_SIZE:
             self._count_lbl.configure(text_color=ERR)
         elif n >= int(MAX_QUEUE_SIZE * 0.8):
