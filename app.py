@@ -215,6 +215,9 @@ class App(ctk.CTk):
         self._pending_refresh: dict[str, object] = {}
         self._refresh_job: str | None = None
         self._last_running: bool | None = None
+        # Auto-scroll: follow active downloads in large queues (1000 items)
+        self._auto_scroll_enabled: bool = True
+        self._auto_scroll_job: str | None = None
 
         self._build_ui()
         self._fix_mousewheel_scroll()
@@ -523,6 +526,14 @@ class App(ctk.CTk):
         self._count_lbl = ctk.CTkLabel(hdr, text="0 items", text_color=MUT,
                                        font=FONT_SM)
         self._count_lbl.pack(side="right")
+        # Auto-scroll toggle — lets user keep manual control if needed
+        self._auto_scroll_var = tk.BooleanVar(value=True)
+        self._auto_scroll_chk = ctk.CTkCheckBox(
+            hdr, text="Auto-scroll", variable=self._auto_scroll_var,
+            command=self._on_auto_scroll_toggle,
+            fg_color=ACCENT, border_color=BORDER, text_color=MUT,
+            font=FONT_SM, checkbox_width=14, checkbox_height=14)
+        self._auto_scroll_chk.pack(side="right", padx=(0, 10))
 
         opf = ctk.CTkFrame(parent, fg_color="transparent")
         opf.pack(fill="x", padx=14, pady=(0, 4))
@@ -1067,6 +1078,12 @@ class App(ctk.CTk):
             f"Completed: {completed}  Failed: {failed}  "
             f"Skipped: {skipped}  Paused: {paused}  Total: {total}")
 
+        # Auto-scroll to next active video once the top batch finishes,
+        # so user doesn't need manual scrolling in 1000-item queues.
+        if task.status in (DownloadStatus.COMPLETED, DownloadStatus.FAILED,
+                          DownloadStatus.SKIPPED, DownloadStatus.DOWNLOADING):
+            self._schedule_auto_scroll()
+
     def _update_overall(self, completed=None, failed=None, skipped=None,
                         paused=None, total=None) -> None:
         if total is None:
@@ -1090,6 +1107,67 @@ class App(ctk.CTk):
         self._overall_lbl.configure(
             text=f"{done}/{total} done  •  {completed} completed  •  "
                  f"{failed} failed  •  {skipped} skipped  •  {paused} paused  •  {pct:.0f}%")
+
+    # ── Auto-scroll (queue follow) ───────────────────────────────────────────
+    def _on_auto_scroll_toggle(self) -> None:
+        self._auto_scroll_enabled = bool(self._auto_scroll_var.get())
+        if self._auto_scroll_enabled:
+            self._schedule_auto_scroll()
+
+    def _schedule_auto_scroll(self) -> None:
+        if not getattr(self, "_auto_scroll_enabled", True):
+            return
+        if self._auto_scroll_job is not None:
+            try:
+                self.after_cancel(self._auto_scroll_job)
+            except Exception:
+                pass
+        # Debounce — many COMPLETED events can fire together in a batch
+        self._auto_scroll_job = self.after(280, self._do_auto_scroll)
+
+    def _do_auto_scroll(self) -> None:
+        self._auto_scroll_job = None
+        if not getattr(self, "_auto_scroll_enabled", True):
+            return
+        if not self._tasks or not hasattr(self, "_scroll"):
+            return
+        if not self._queue.is_running:
+            return
+        try:
+            # Prefer the currently DOWNLOADING item, otherwise next QUEUED
+            active_idx: int | None = None
+            for idx, t in enumerate(self._tasks):
+                if t.status == DownloadStatus.DOWNLOADING:
+                    active_idx = idx
+                    break
+            if active_idx is None:
+                for idx, t in enumerate(self._tasks):
+                    if t.status == DownloadStatus.QUEUED:
+                        active_idx = idx
+                        break
+            if active_idx is None:
+                return
+            canvas = self._scroll._parent_canvas  # CTkScrollableFrame internals
+            total = len(self._tasks)
+            # Skip if active already comfortably inside viewport (avoid jitter)
+            try:
+                first, last = canvas.yview()
+                frac = active_idx / max(1, total)
+                # 8% hysteresis — only scroll if active is off-screen or near edge
+                if first + 0.06 <= frac <= last - 0.06:
+                    return
+            except Exception:
+                pass
+            # Place active ~12% from top so a couple of preceding rows stay visible
+            target = max(0.0, min(1.0, (active_idx - 1) / max(1, total)))
+            # Ensure geometry is up to date before scrolling
+            try:
+                self.update_idletasks()
+            except Exception:
+                pass
+            canvas.yview_moveto(target)
+        except Exception:
+            pass
 
     def _sync_buttons(self) -> None:
         running = self._queue.is_running
