@@ -22,9 +22,11 @@ from models.task import (
     AUDIO_QUALITY_LABELS,
 )
 from downloader.playlist import build_tasks
-from downloader.queue import DownloadQueue
+from downloader.queue import DownloadQueue, MAX_QUEUE_SIZE
 from downloader import runtime
 from storage import db
+
+QUEUE_CHUNK_SIZE = 50  # rows created per idle batch — keeps UI responsive at 1000 items
 
 
 ctk.set_appearance_mode("dark")
@@ -518,7 +520,7 @@ class App(ctk.CTk):
         hdr.pack(fill="x", padx=14, pady=(12, 4))
         ctk.CTkLabel(hdr, text="Download Queue", text_color=TEXT,
                      font=("Segoe UI", 14, "bold")).pack(side="left")
-        self._count_lbl = ctk.CTkLabel(hdr, text="0 items", text_color=MUT,
+        self._count_lbl = ctk.CTkLabel(hdr, text=f"0/{MAX_QUEUE_SIZE} items", text_color=MUT,
                                        font=FONT_SM)
         self._count_lbl.pack(side="right")
 
@@ -763,14 +765,65 @@ class App(ctk.CTk):
                     f"Range applied: videos {start}–{end} of {total} "
                     f"({len(tasks)} item(s)).")
 
+        # ── Queue capacity guard (MAX_QUEUE_SIZE = 1000) ──────────────────
+        remaining = MAX_QUEUE_SIZE - len(self._tasks)
+        if remaining <= 0:
+            self._log_append(f"Queue full ({MAX_QUEUE_SIZE}/{MAX_QUEUE_SIZE}) — clear items before adding more.")
+            messagebox.showwarning(
+                "Queue Full",
+                f"The queue is at its limit of {MAX_QUEUE_SIZE} videos.\n\n"
+                "Remove completed/failed items (Clear Done) or clear the queue before adding more.")
+            self._update_count_label()
+            return
+
+        # Filter duplicates first so capacity accounting is accurate.
+        unique = []
+        dup_count = 0
+        for t in tasks:
+            if t.video_id in self._rows:
+                dup_count += 1
+            else:
+                unique.append(t)
+        if dup_count:
+            self._log_append(f"Skipped {dup_count} duplicate(s) already in queue.")
+
+        if not unique:
+            self._set_status("All videos were already in the queue.")
+            self._update_count_label()
+            return
+
+        truncated = 0
+        if len(unique) > remaining:
+            truncated = len(unique) - remaining
+            unique = unique[:remaining]
+            self._log_append(
+                f"Queue limit: only {remaining} of {remaining + truncated} new video(s) can be added "
+                f"(cap {MAX_QUEUE_SIZE}). {truncated} video(s) not added — clear done items or increase range filtering.")
+            messagebox.showwarning(
+                "Queue Limit Reached",
+                f"Only {remaining} more video(s) can be added (limit {MAX_QUEUE_SIZE}).\n\n"
+                f"{truncated} video(s) were not added.\n"
+                "Tip: use 'From # / To #' range or 'Clear Done' to make space.")
+
+        # Large playlists can freeze the UI if all 1000 rows are created at once.
+        # Create rows in small chunks via after() so the event loop stays responsive.
+        if len(unique) > QUEUE_CHUNK_SIZE:
+            self._set_status(f"Adding {len(unique)} item(s) to queue…")
+            self._enqueue_chunked(unique, delay, 0, truncated, dup_count)
+        else:
+            added = self._add_tasks_sync(unique, delay)
+            self._finish_enqueue(added, truncated, dup_count)
+
+    def _add_tasks_sync(self, tasks: list, delay: int) -> list:
+        """Synchronously add a small batch and create rows. Returns added list."""
         added = []
         for task in tasks:
-            if task.video_id in self._rows:
-                self._log_append(f"Skipped duplicate: {task.title}")
-                continue
             task.inter_download_delay = delay
+            ok = self._queue.ensure_pending(task)
+            if not ok:
+                self._log_append(f"Queue full — could not add: {task.title}")
+                break
             self._tasks.append(task)
-            self._queue.ensure_pending(task)
             row = QueueRow(self._scroll, task, callbacks={
                 "on_pause": self._pause_task,
                 "on_resume": self._resume_task,
@@ -781,11 +834,61 @@ class App(ctk.CTk):
             row.refresh()
             self._rows[task.video_id] = row
             added.append(task)
-
-        self._count_lbl.configure(text=f"{len(self._tasks)} items")
-        self._log_append(f"Added {len(added)} item(s) to queue.")
-        self._set_status(f"Added {len(added)} item(s). Click Start to begin.")
+        self._update_count_label()
         self._update_overall()
+        return added
+
+    def _enqueue_chunked(self, tasks: list, delay: int, offset: int,
+                         truncated: int, dup_count: int) -> None:
+        chunk = tasks[offset: offset + QUEUE_CHUNK_SIZE]
+        for task in chunk:
+            task.inter_download_delay = delay
+            ok = self._queue.ensure_pending(task)
+            if not ok:
+                self._log_append(f"Queue full — stopped at {len(self._tasks)}/{MAX_QUEUE_SIZE}.")
+                break
+            self._tasks.append(task)
+            row = QueueRow(self._scroll, task, callbacks={
+                "on_pause": self._pause_task,
+                "on_resume": self._resume_task,
+                "on_retry": self._retry_task,
+                "on_delete": self._delete_task,
+            })
+            row.pack(fill="x", padx=4, pady=4)
+            row.refresh()
+            self._rows[task.video_id] = row
+
+        self._update_count_label()
+        self._update_overall()
+
+        nxt = offset + QUEUE_CHUNK_SIZE
+        if nxt < len(tasks):
+            # Schedule next chunk without blocking UI (progress bar stays alive)
+            self.after(15, lambda: self._enqueue_chunked(tasks, delay, nxt, truncated, dup_count))
+        else:
+            added_count = len(tasks)
+            self._finish_enqueue(tasks[:added_count], truncated, dup_count)
+
+    def _finish_enqueue(self, added: list, truncated: int, dup_count: int) -> None:
+        self._log_append(f"Added {len(added)} item(s) to queue.")
+        if truncated:
+            self._set_status(
+                f"Added {len(added)} item(s) (limit {MAX_QUEUE_SIZE}, {truncated} not added). Click Start to begin.")
+        else:
+            self._set_status(f"Added {len(added)} item(s). Click Start to begin.")
+        self._update_count_label()
+        self._update_overall()
+
+    def _update_count_label(self) -> None:
+        n = len(self._tasks)
+        self._count_lbl.configure(text=f"{n}/{MAX_QUEUE_SIZE} items")
+        # Warn visually as we approach the limit
+        if n >= MAX_QUEUE_SIZE:
+            self._count_lbl.configure(text_color=ERR)
+        elif n >= int(MAX_QUEUE_SIZE * 0.8):
+            self._count_lbl.configure(text_color=WARN)
+        else:
+            self._count_lbl.configure(text_color=MUT)
 
     # ── Queue controls ────────────────────────────────────────────────────────
 
@@ -814,13 +917,20 @@ class App(ctk.CTk):
         if not failed:
             messagebox.showinfo("Nothing to Retry", "No failed items in the queue.")
             return
+        requeued = 0
         for task in failed:
             self._reset_task(task)
-            self._queue.ensure_pending(task)
+            if self._queue.ensure_pending(task):
+                requeued += 1
+            else:
+                self._log_append(f"Queue full — could not requeue: {task.title}")
+        if requeued == 0:
+            messagebox.showwarning("Queue Full", f"Queue is at limit ({MAX_QUEUE_SIZE}). Clear space before retrying.")
+            return
         self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
-        self._log_append(f"Retrying {len(failed)} failed item(s)…")
-        self._set_status(f"Retrying {len(failed)} item(s)…")
+        self._log_append(f"Retrying {requeued}/{len(failed)} failed item(s)…")
+        self._set_status(f"Retrying {requeued} item(s)…")
 
     def _clear_queue(self) -> None:
         self._queue.stop()
@@ -830,7 +940,7 @@ class App(ctk.CTk):
         self._pending_refresh.clear()
         for w in self._scroll.winfo_children():
             w.destroy()
-        self._count_lbl.configure(text="0 items")
+        self._update_count_label()
         self._overall_bar.set(0)
         self._overall_lbl.configure(text="")
         self._log_append("Queue cleared.")
@@ -848,7 +958,7 @@ class App(ctk.CTk):
             else:
                 still_active.append(task)
         self._tasks = still_active
-        self._count_lbl.configure(text=f"{len(self._tasks)} items")
+        self._update_count_label()
         self._update_overall()
         self._set_status(f"Cleared finished items. {len(self._tasks)} remaining.")
 
@@ -866,13 +976,19 @@ class App(ctk.CTk):
                                DownloadStatus.QUEUED):
             return
         self._reset_task(task)
-        self._queue.ensure_pending(task)
+        if not self._queue.ensure_pending(task):
+            messagebox.showwarning("Queue Full", f"Queue is at limit ({MAX_QUEUE_SIZE}). Clear space before resuming.")
+            self._log_append(f"Queue full — could not resume: {task.title}")
+            return
         self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
 
     def _retry_task(self, task) -> None:
         self._reset_task(task)
-        self._queue.ensure_pending(task)
+        if not self._queue.ensure_pending(task):
+            messagebox.showwarning("Queue Full", f"Queue is at limit ({MAX_QUEUE_SIZE}). Clear space before retrying.")
+            self._log_append(f"Queue full — could not retry: {task.title}")
+            return
         self._apply_throttle()
         self._queue.start(skip_downloaded=self._skip_var.get())
 
@@ -894,7 +1010,7 @@ class App(ctk.CTk):
         if row:
             row.destroy()
         self._tasks = [t for t in self._tasks if t.video_id != task.video_id]
-        self._count_lbl.configure(text=f"{len(self._tasks)} items")
+        self._update_count_label()
         self._update_overall()
         self._set_status(f"Removed: {task.title[:50]}")
 
@@ -973,11 +1089,24 @@ class App(ctk.CTk):
             self._last_running = running
             self._start_btn.configure(state="normal" if not running else "disabled")
             self._pause_btn.configure(state="disabled" if not running else "normal")
+        # Disable Add when at capacity to prevent accidental 1000+ growth
+        try:
+            is_full = len(self._tasks) >= MAX_QUEUE_SIZE
+            self._add_btn.configure(state="disabled" if is_full else "normal")
+        except Exception:
+            pass
         self.after(400, self._sync_buttons)
 
     def _log_append(self, msg: str) -> None:
         self._log.configure(state="normal")
         self._log.insert("end", msg + "\n")
+        # Trim log to keep memory/UI responsive with large queues (1000 items → many log lines)
+        try:
+            line_count = int(self._log.index("end-1c").split(".")[0])
+            if line_count > 1200:
+                self._log.delete("1.0", f"{line_count - 1000}.0")
+        except Exception:
+            pass
         self._log.see("end")
         self._log.configure(state="disabled")
 

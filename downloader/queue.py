@@ -6,10 +6,13 @@ from models.task import VideoTask, DownloadStatus
 from downloader.download import download_task, _PauseRequested
 
 
+MAX_QUEUE_SIZE = 1000  # hard cap to prevent UI / memory overload
+
 class DownloadQueue:
-    def __init__(self, max_workers: int = 3):
+    def __init__(self, max_workers: int = 3, max_size: int = MAX_QUEUE_SIZE):
         self._pending: list[VideoTask] = []
         self._max_workers = max_workers
+        self._max_size = max_size
         self._executor: Optional[ThreadPoolExecutor] = None
         self._running = False
         self._lock = threading.Lock()
@@ -30,19 +33,57 @@ class DownloadQueue:
     def max_workers(self, value: int) -> None:
         self._max_workers = value
 
-    def add(self, task: VideoTask) -> None:
+    # ── Capacity helpers ───────────────────────────────────────────────
+    @property
+    def max_size(self) -> int:
+        return self._max_size
+
+    @property
+    def size(self) -> int:
+        """Total tracked tasks (pending + in-flight). Thread-safe snapshot."""
         with self._lock:
+            return len(self._pending) + len(self._in_flight)
+
+    @property
+    def remaining_capacity(self) -> int:
+        return max(0, self._max_size - self.size)
+
+    def is_full(self) -> bool:
+        return self.size >= self._max_size
+
+    def can_add(self, n: int = 1) -> bool:
+        return self.size + n <= self._max_size
+
+    def add(self, task: VideoTask) -> bool:
+        """Try to add one task. Returns False if queue is at capacity."""
+        with self._lock:
+            if len(self._pending) + len(self._in_flight) >= self._max_size:
+                return False
             self._pending.append(task)
+            return True
 
-    def add_many(self, tasks: list[VideoTask]) -> None:
+    def add_many(self, tasks: list[VideoTask]) -> int:
+        """Add up to capacity. Returns number actually added."""
+        if not tasks:
+            return 0
         with self._lock:
-            self._pending.extend(tasks)
+            available = self._max_size - (len(self._pending) + len(self._in_flight))
+            if available <= 0:
+                return 0
+            to_add = tasks[:available]
+            self._pending.extend(to_add)
+            return len(to_add)
 
-    def ensure_pending(self, task: VideoTask) -> None:
-        """Add the task only if it is not already tracked (identity check)."""
+    def ensure_pending(self, task: VideoTask) -> bool:
+        """Add the task only if it is not already tracked (identity check).
+        Returns False if queue is full or already present."""
         with self._lock:
-            if not any(t is task for t in self._pending):
-                self._pending.append(task)
+            if any(t is task for t in self._pending) or any(t is task for t in self._in_flight):
+                return True  # already tracked — not an error
+            if len(self._pending) + len(self._in_flight) >= self._max_size:
+                return False
+            self._pending.append(task)
+            return True
 
     def start(self, skip_downloaded: bool = True) -> None:
         with self._lock:
